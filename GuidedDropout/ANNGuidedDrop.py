@@ -18,7 +18,9 @@ class DenseLayerwithGD:
                  weight_normalization=False,
                  keep_prob=None, layernum=0,
                  guided_dropout_mask=None,
-                 guided_dropconnect_mask=None):
+                 guided_dropconnect_mask=None
+                # kwardslayer = {"guided_dropout_mask": None, "guided_dropconnect_mask" : None}
+    ):
         """
         Implement the guided dropout and guided dropconnect case.
         for weight normalization see https://arxiv.org/abs/1602.07868
@@ -33,6 +35,7 @@ class DenseLayerwithGD:
         :param layernum: number of layer (this layer in the graph)
         :param guided_dropout_mask: the mask use for guided dropout (None if you don't want it) [tensorflow tensor]
         :param guided_dropconnect_mask: the mask use for guided dropconnect ('None' if you don't want it) [tensorflow tensor]
+        # :param kwardslayer: TODO
         """
         nin_ = int(input.get_shape()[1])
         self.nbparams = 0  # number of trainable parameters
@@ -41,6 +44,9 @@ class DenseLayerwithGD:
         self.weightnormed = False
         self.bias = False
         self.res = None
+        # guided_dropconnect_mask = kwardslayer["guided_dropconnect_mask"]
+        # guided_dropout_mask = kwardslayer["guided_dropout_mask"]
+
         with tf.variable_scope("dense_layer_{}".format(layernum)):
             self.w_ = tf.get_variable(name="weights_matrix",
                                       shape=[nin_, size],
@@ -112,12 +118,28 @@ class DenseLayerwithGD:
             return
         # input = sess.run(input)
         with tf.variable_scope("init_wn_layer"):
-            m_init, v_init = sess.run(tf.nn.moments(tf.matmul(self.input, self.w), [0]))
+            m_init, v_init = sess.run(tf.nn.moments(tf.matmul(self.input, self.scaled_matrix), [0]))
             # pdb.set_trace()
             sess.run(tf.assign(self.g, scale_init/tf.sqrt(v_init + 1e-10), name="weigth_normalization_init_g"))
             if self.bias:
-                sess.run(tf.assign(self.b, -m_init*scale_init, name="weigth_normalization_init_b"))
+                sess.run(tf.assign(self.b, -m_init*scale_init/tf.sqrt(v_init + 1e-10), name="weigth_normalization_init_b"))
 
+
+class EmulDenseLayerwithGD(DenseLayerwithGD):
+    def __init__(self, kwardslayer={}, layerClass=None, *args, **kwargs):
+        """
+        Wrapper to forward 
+        :param kwardslayer: 
+        :param args: 
+        :param kwargs: 
+        """
+        guided_dropout_mask = None if not "guided_dropout_mask" in kwardslayer else kwardslayer["guided_dropout_mask"]
+        guided_dropconnect_mask = None if not "guided_dropconnect_mask" in kwardslayer else kwardslayer["guided_dropconnect_mask"]
+
+        DenseLayerwithGD.__init__(self,*args,
+                                   guided_dropout_mask=guided_dropout_mask,
+                                   guided_dropconnect_mask=guided_dropconnect_mask,
+                                   **kwargs)
 
 # TODO merge that with ComplexGraph
 class ComplexGraphWithGD(ComplexGraph):
@@ -162,15 +184,20 @@ class ComplexGraphWithGD(ComplexGraph):
         """
         modifkwargsNN = copy.deepcopy(kwargsNN)
         if "layerClass" in modifkwargsNN:
+            # TODO nothing to do here!
             msg = "I: ComplexGraphWithGD: you pass a specific class \"{}\" to build the layers."
             msg += " This class should accept the key-word arguments \"guided_dropout_mask\" and \"guided_droconnect_mask\" "
+            msg += "in its \"kwardslayer\" constructor"
             print(msg.format(modifkwargsNN["layerClass"]))
         else:
-            modifkwargsNN["layerClass"] = DenseLayerwithGD
+            modifkwargsNN["layerClass"] = EmulDenseLayerwithGD
 
         dict_kargs = {}
         if "kwardslayer" in modifkwargsNN:
-            dict_kargs = copy.deepcopy(modifkwargsNN["kwardslayer"])
+            if "kwardslayer" in modifkwargsNN["kwardslayer"]:
+                dict_kargs = copy.deepcopy(modifkwargsNN["kwardslayer"]["kwardslayer"])
+        else:
+            modifkwargsNN["kwardslayer"] = {}
 
         if "guided_dropout_mask" in dict_kargs:
             msg = "W: \"guided_dropout_mask\" in \"kwargsNN\" of object ComplexGraphWithGD will be erased"
@@ -186,7 +213,7 @@ class ComplexGraphWithGD(ComplexGraph):
                 #TODO HEre for multiple variable in guided dropout (logical or and better choice of mask!)
             vars = sorted(list(dropout_spec["vars"]))
             var = vars[0]
-            if len(dropout_spec) > 1:
+            if len(vars) > 1:
                 msg = "W guided dropout with multiple masks is for now not coded."
                 msg += " Only mask corresponding to variable {}"
                 msg += " will be used."
@@ -205,7 +232,7 @@ class ComplexGraphWithGD(ComplexGraph):
                 #TODO HEre for multiple variable in guided dropout (logical or and better choice of mask!)
             vars = sorted(list(dropconnect_spec["vars"]))
             var = vars[0]
-            if len(dropconnect_spec) > 1:
+            if len(vars) > 1:
                 msg = "W guided dropconnect with multiple masks is for now not coded."
                 msg += " Only mask corresponding to variable {}"
                 msg += " will be used."
@@ -224,7 +251,7 @@ class ComplexGraphWithGD(ComplexGraph):
                                              proba_select=proba_select)
             dict_kargs['guided_dropconnect_mask'] = self.encgd(data[var])
 
-        modifkwargsNN["kwardslayer"] = dict_kargs
+        modifkwargsNN["kwardslayer"]["kwardslayer"] = dict_kargs
         ComplexGraph.__init__(self,
                               data=data,
                               outputsize=outputsize, sizes=sizes,

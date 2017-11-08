@@ -175,6 +175,7 @@ class SpecificGDOEncoding(SpecificGDCEncoding):
         return res
 
     def guided_aux(self, x):
+        # pdb.set_trace()
         xhash = x.astype(np.int).tostring()
         return self.masks[xhash]
 
