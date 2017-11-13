@@ -1,5 +1,6 @@
 import os
 import copy
+import re
 
 import numpy as np
 import tensorflow as tf
@@ -17,6 +18,7 @@ class EncodingRaw:
         self.enco = {}
         self.nullElemenEnc = nullElemenEnc
         self.size = nullElemenEnc.shape
+        self.num_elem = num_elem
         self.nullelemenArr = np.zeros(num_elem, dtype=np.int)
         self.nullElemenkey = self.nullelemenArr.tostring()
         self.enco[self.nullElemenkey] = copy.deepcopy(nullElemenEnc)
@@ -51,36 +53,114 @@ class EncodingRaw:
     def keys(self):
         return self.enco.keys()
 
+    def save(self, path, name):
+        """
+        save the masks for every key
+        :param path: the path where the data should be stored
+        :param name: the name used to save (all mask will be stored in path/name/...npy)
+        :return: 
+        """
+        mypath = os.path.join(path, name)
+        if not os.path.exists(mypath):
+            os.mkdir(os.path.join(mypath))
+        for key, mask in self.enco.items():
+            arr = np.fromstring(key, dtype=np.int)
+            nm = []
+            for i, v in enumerate(arr):
+                if v != 0:
+                    nm.append("{}".format(i))
+            if len(nm) == 0:
+                nm = "bc"
+            else:
+                nm = "_".join(nm)
+            nm += ".npy"
+            np.save(file=os.path.join(mypath, nm), arr=mask)
+
+    def reload(self, path, name):
+        """
+        reload the mask for every keys
+        :param path: the path from where the data should be restored
+        :param name: 
+        :return: 
+        """
+        mypath = os.path.join(path, name)
+        if not os.path.exists(mypath):
+            msg = "E: EncodingRaw.reload: the directory {} doest not exists".format(mypath)
+            raise RuntimeError(msg)
+        del self.enco
+        self.enco = {}
+
+        if not os.path.exists(os.path.join(mypath, "bc.npy")):
+            msg = "E: EncodingRaw.reload: the file in bc.npy is nto located at {}, but it should".format(mypath)
+            raise RuntimeError(msg)
+
+        arr = np.load(os.path.join(mypath, "bc.npy"))
+        self.enco[self.nullElemenkey] = copy.deepcopy(arr)
+
+        for fn in os.listdir(mypath):
+            if not self._isfnOK(fn):
+                continue
+            key = self._extractkey(fn)
+            self.enco[key] = np.load(os.path.join(mypath, fn))
+
+    def _isfnOK(self, fn):
+        """
+        return true if the file is a 'mask' file
+        :param fn: 
+        :return: 
+        """
+        return re.match("([0-9]+(\_[0-9]+)*)\.npy", fn) is not None
+
+    def _extractkey(self, fn):
+        """
+        Extract the key to the stored array
+        :param fn: 
+        :return: 
+        """
+        fn = re.sub("\.npy", "", fn)
+        fns = fn.split("_")
+        arr = np.zeros(self.num_elem, dtype=np.int)
+        for el in fns:
+            arr[int(el)] = 1
+        return arr.tostring()
+
 
 class SpecificGDCEncoding:
-    def __init__(self, sizeinputonehot, nrow, ncol, proba_select=0.25, name="guided_dropconnect_encoding"):
+    def __init__(self, sizeinputonehot, nrow, ncol,
+                 proba_select=0.25, name="guided_dropconnect_encoding",
+                 path=".", reload=False):
         """
         Encoding for guided dropconnect
         :param nrow
         :param ncol
         :param sizeinputonehot: size of the input vector
         :param probaselect: the probability for a given connection to be selected as a mask
+        :param path: path where mask will be stored
+        :param reaload: do you want to reload (T) or build (F) the mask
         """
         self.size_in = nrow
         self.size_out = ncol
         self.proba_select = proba_select
         self.sizeinputonehot = sizeinputonehot  # for now works only with one-hot data
-
         choices = self.which_goes_where()
         # build the null element encoding:
         nullElemenEnc = np.zeros(shape=self.proper_size_init(), dtype=np.float32)
         nullElemenEnc[choices == self.sizeinputonehot] = 1.
         self.masks = EncodingRaw(num_elem=self.sizeinputonehot, nullElemenEnc=nullElemenEnc)
-        null_key = np.zeros(self.sizeinputonehot, dtype=np.int)
-        # build the other masks
-        for i in range(self.sizeinputonehot):
-            tmp_key = copy.deepcopy(null_key)
-            tmp_key[i] = 1
-            tmp_val = copy.deepcopy(nullElemenEnc)
-            tmp_val[choices == i] = 1
-            self.masks[tmp_key.tostring()] = tmp_val
-            # print(tmp_key.tostring())
-        self.name_op = name
+        if not reload:
+            null_key = np.zeros(self.sizeinputonehot, dtype=np.int)
+            # build the other masks
+            for i in range(self.sizeinputonehot):
+                tmp_key = copy.deepcopy(null_key)
+                tmp_key[i] = 1
+                tmp_val = copy.deepcopy(nullElemenEnc)
+                tmp_val[choices == i] = 1
+                self.masks[tmp_key.tostring()] = tmp_val
+                # print(tmp_key.tostring())
+            self.name_op = name
+            self.masks.save(path=path, name=name)
+        else:
+            self.masks.reload(path=path, name=name)
 
     def __call__(self, x):
         """
@@ -150,14 +230,16 @@ class SpecificGDCEncoding:
 
 class SpecificGDOEncoding(SpecificGDCEncoding):
     def __init__(self, sizeinputonehot, sizeout, proba_select=0.25,
-                 name="guided_dropout_encoding"):
+                 name="guided_dropout_encoding",
+                 path=".", reload=False):
         """
 
         :param sizeout: 
         :param proba_select: 
         """
         SpecificGDCEncoding.__init__(self, sizeinputonehot=sizeinputonehot, nrow=1,
-                                     ncol=sizeout, proba_select=proba_select, name=name)
+                                     ncol=sizeout, proba_select=proba_select, name=name,
+                                     path=path, reload=reload)
 
     def proper_size_init(self):
         return self.size_out

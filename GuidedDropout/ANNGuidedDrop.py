@@ -146,6 +146,7 @@ class ComplexGraphWithGD(ComplexGraph):
     def __init__(self, data,
                  outputsize,
                  sizes,
+                 path, reload,
                  var_x_name={"input"}, var_y_name={"output"},
                  nnType=NNFully, argsNN=(), kwargsNN={},
                  encDecNN=NNFully, args_enc=(), kwargs_enc={},
@@ -181,6 +182,8 @@ class ComplexGraphWithGD(ComplexGraph):
         :param outputsize: the output size for the intermediate / main neural network
         :param dropout_spec
         :param dropconnect_spec
+        :param path: path of the experiment
+        :param reload: should the mask be reloaded or build from scratch
         """
         modifkwargsNN = copy.deepcopy(kwargsNN)
         if "layerClass" in modifkwargsNN:
@@ -224,7 +227,9 @@ class ComplexGraphWithGD(ComplexGraph):
             proba_select = dropout_spec["proba_select"]
             self.encgd = SpecificGDOEncoding(sizeinputonehot=int(data[var].get_shape()[1]),
                                              sizeout=outputsize,
-                                             proba_select=proba_select)
+                                             proba_select=proba_select,
+                                             path=path,
+                                             reload=reload)
             dict_kargs['guided_dropout_mask'] = self.encgd(data[var])
 
         if len(dropconnect_spec):
@@ -248,7 +253,9 @@ class ComplexGraphWithGD(ComplexGraph):
             self.encgd = SpecificGDCEncoding(sizeinputonehot=int(data[var].get_shape()[1]),
                                              ncol=outputsize,
                                              nrow=nrow,
-                                             proba_select=proba_select)
+                                             proba_select=proba_select,
+                                             path=path,
+                                             reload=reload)
             dict_kargs['guided_dropconnect_mask'] = self.encgd(data[var])
 
         modifkwargsNN["kwardslayer"]["kwardslayer"] = dict_kargs
