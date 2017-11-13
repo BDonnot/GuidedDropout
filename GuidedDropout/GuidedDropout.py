@@ -35,12 +35,12 @@ class EncodingRaw:
                 raise RuntimeError(
                     "EncodingRaw.__getitem__: unsuported querying for object of size {} (normal size should be {})".format(
                         len(item), self.num))
-            tmp = self.nullelemenArr
+            # tmp = self.nullelemenArr
             res = self.nullElemenEnc
             arr_tmp = np.fromstring(item, dtype=np.int)
             for id_el, el in enumerate(arr_tmp):
                 if el != 0:
-                    tmp_ = copy.copy(tmp)
+                    tmp_ = copy.copy(self.nullelemenArr)
                     tmp_[id_el] = el
                     tmp_ = self.__getitem__(tmp_.tostring())
                     res = np.logical_or(res, tmp_)
@@ -83,12 +83,15 @@ class EncodingRaw:
         :param name: 
         :return: 
         """
+        # pdb.set_trace()
         mypath = os.path.join(path, name)
         if not os.path.exists(mypath):
             msg = "E: EncodingRaw.reload: the directory {} doest not exists".format(mypath)
             raise RuntimeError(msg)
         del self.enco
         self.enco = {}
+        # self.nullelemenArr = np.zeros(num_elem, dtype=np.int)
+        # self.nullElemenkey = self.nullelemenArr.tostring()
 
         if not os.path.exists(os.path.join(mypath, "bc.npy")):
             msg = "E: EncodingRaw.reload: the file in bc.npy is nto located at {}, but it should".format(mypath)
@@ -96,7 +99,7 @@ class EncodingRaw:
 
         arr = np.load(os.path.join(mypath, "bc.npy"))
         self.enco[self.nullElemenkey] = copy.deepcopy(arr)
-
+        self.nullElemenEnc = copy.deepcopy(arr)
         for fn in os.listdir(mypath):
             if not self._isfnOK(fn):
                 continue
@@ -122,6 +125,7 @@ class EncodingRaw:
         arr = np.zeros(self.num_elem, dtype=np.int)
         for el in fns:
             arr[int(el)] = 1
+        # print("fn: {}\n key: {}".format(fn, arr))
         return arr.tostring()
 
 
@@ -147,6 +151,7 @@ class SpecificGDCEncoding:
         nullElemenEnc = np.zeros(shape=self.proper_size_init(), dtype=np.float32)
         nullElemenEnc[choices == self.sizeinputonehot] = 1.
         self.masks = EncodingRaw(num_elem=self.sizeinputonehot, nullElemenEnc=nullElemenEnc)
+        self.name_op = name
         if not reload:
             null_key = np.zeros(self.sizeinputonehot, dtype=np.int)
             # build the other masks
@@ -157,7 +162,6 @@ class SpecificGDCEncoding:
                 tmp_val[choices == i] = 1
                 self.masks[tmp_key.tostring()] = tmp_val
                 # print(tmp_key.tostring())
-            self.name_op = name
             self.masks.save(path=path, name=name)
         else:
             self.masks.reload(path=path, name=name)
