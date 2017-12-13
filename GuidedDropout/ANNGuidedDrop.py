@@ -267,3 +267,129 @@ class ComplexGraphWithGD(ComplexGraph):
                               encDecNN=encDecNN, args_enc=args_enc, kwargs_enc=kwargs_enc,
                               args_dec=args_dec, kwargs_dec=kwargs_dec, kwargs_enc_dec=kwargs_enc_dec,
                               spec_encoding=spec_encoding)
+
+#TODO documentation
+#TODO refactoring with previous class
+class ComplexGraphWithComplexGD(ComplexGraph):
+    def __init__(self, data,
+                 outputsize,
+                 sizes,
+                 path, reload,
+                 var_x_name={"input"}, var_y_name={"output"},
+                 nnType=NNFully, argsNN=(), kwargsNN={},
+                 encDecNN=NNFully, args_enc=(), kwargs_enc={},
+                 args_dec=(), kwargs_dec={},
+                 kwargs_enc_dec=None,
+                 spec_encoding={},
+                 dropout_spec={}, dropconnect_spec={}):
+        """
+        This class can deal with multiple input/output.
+        It will first "encode" with a neural network of type "encDecNN" for each input.
+        Then concatenate all the outputs to feed the "main" neural network of type "nnType"
+        Afterwards, information goes through a decoding process, with neural network of type "encDecNN"
+
+        The value for each can be retrieve with standard methods:
+        - self.get_true_output_dict()
+        - self.vars_out
+        - self.vars_in
+
+        Basically, this should represent the neural network.
+        :param data: the dictionnary of input tensor data (key=name, value=tensorflow tensor)
+        :param var_x_name: iterable: the names of all the input variables
+        :param var_y_name: iterable: the name of  all the output variables
+        :param nnType: the type of neural network to use
+        :param args forwarded to the initializer of neural network
+        :param kwargsNN: key word arguments forwarded to the initializer of neural network
+        :param encDecNN: class to use to build the neural networks for encoding / decoding
+        :param args_enc:
+        :param kwargs_enc: 
+        :param args_dec:
+        :param kwargs_dec: 
+        :param kwargs_enc_dec: 
+        :param sizes: the size output by the encoder for each input variable. Dictionnary with key: variable names, value: size
+        :param outputsize: the output size for the intermediate / main neural network
+        :param dropout_spec
+        :param dropconnect_spec
+        :param path: path of the experiment
+        :param reload: should the mask be reloaded or build from scratch
+        """
+        modifkwargsNN = copy.deepcopy(kwargsNN)
+        if "layerClass" in modifkwargsNN:
+            # TODO nothing to do here!
+            msg = "I: ComplexGraphWithGD: you pass a specific class \"{}\" to build the layers."
+            msg += " This class should accept the key-word arguments \"guided_dropout_mask\" and \"guided_droconnect_mask\" "
+            msg += "in its \"kwardslayer\" constructor"
+            print(msg.format(modifkwargsNN["layerClass"]))
+        else:
+            modifkwargsNN["layerClass"] = EmulDenseLayerwithGD
+
+        dict_kargs = {}
+        if "kwardslayer" in modifkwargsNN:
+            if "kwardslayer" in modifkwargsNN["kwardslayer"]:
+                dict_kargs = copy.deepcopy(modifkwargsNN["kwardslayer"]["kwardslayer"])
+        else:
+            modifkwargsNN["kwardslayer"] = {}
+
+        if "guided_dropout_mask" in dict_kargs:
+            msg = "W: \"guided_dropout_mask\" in \"kwargsNN\" of object ComplexGraphWithGD will be erased"
+            msg += " and replace with the data in \"var_dropout_name\""
+            print(msg)
+        if "guided_dropconnect_mask" in dict_kargs:
+            msg = "W: \"guided_droconnect_mask\" in \"kwargsNN\" of object ComplexGraphWithGD will be erased"
+            msg += " and replace with the data in \"var_dropconnect_name\""
+            print(msg)
+
+        self.encgd = {}
+        self.masks = {}
+        dict_kargs['guided_dropout_mask'] = None
+        if len(dropout_spec):
+            # for var in var_dropout_name:
+                #TODO HEre for multiple variable in guided dropout (logical or and better choice of mask!)
+            vars = sorted(list(dropout_spec["vars"]))
+            # var = vars[0]
+            # if len(vars) > 1:
+            #     msg = "W guided dropout with multiple masks is for now not coded."
+            #     msg += " Only mask corresponding to variable {}"
+            #     msg += " will be used."
+            #     print(msg.format(var))
+            for var in vars:
+                if not "proba_select" in dropout_spec:
+                    msg = "Error: ComplexGraphWithGD: the fields \"proba_select\" in \"dropout_spec\" is not specified"
+                    raise RuntimeError(msg)
+                proba_select = dropout_spec["proba_select"]
+                self.encgd[var] = SpecificGDOEncoding(sizeinputonehot=int(data[var].get_shape()[1]),
+                                                      sizeout=outputsize,
+                                                      proba_select=proba_select[var],
+                                                      path=path,
+                                                      reload=reload,
+                                                      name="{}_guided_dropout_encoding".format(var))
+                self.masks[var] = self.encgd[var](data[var])
+                if dict_kargs['guided_dropout_mask'] is None:
+                    dict_kargs['guided_dropout_mask'] = self.masks[var]
+                else:
+                    dict_kargs['guided_dropout_mask'] = self.logical_or(dict_kargs['guided_dropout_mask'], self.masks[var])
+
+        if len(dropconnect_spec):
+            pass
+            raise RuntimeError("Guided dropconnect is not coded for multiple data")
+
+        modifkwargsNN["kwardslayer"]["kwardslayer"] = dict_kargs
+        ComplexGraph.__init__(self,
+                              data=data,
+                              outputsize=outputsize, sizes=sizes,
+                              var_x_name=var_x_name, var_y_name=var_y_name,
+                              nnType=nnType, argsNN=argsNN, kwargsNN=modifkwargsNN,
+                              encDecNN=encDecNN, args_enc=args_enc, kwargs_enc=kwargs_enc,
+                              args_dec=args_dec, kwargs_dec=kwargs_dec, kwargs_enc_dec=kwargs_enc_dec,
+                              spec_encoding=spec_encoding)
+
+    def logical_or(self, x, y, name="logical_or"):
+        """
+        compute the logical _or function of two floating tensorflow tensors.
+        :param self: 
+        :param x: 
+        :param y: 
+        :param name: an optionnal name for the operation
+        :return: 
+        """
+        return tf.subtract(tf.add(x,y),tf.multiply(x,y),name=name)

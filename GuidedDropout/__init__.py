@@ -3,6 +3,6 @@ from .GuidedDropout import SpecificGDCEncoding, SpecificGDOEncoding
 
 try:
     # define the more advance function, to use with tensorflowHelpers
-    from .ANNGuidedDrop import DenseLayerwithGD, ComplexGraphWithGD
+    from .ANNGuidedDrop import DenseLayerwithGD, ComplexGraphWithGD, ComplexGraphWithComplexGD
 except:
     pass

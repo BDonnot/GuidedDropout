@@ -210,6 +210,7 @@ class SpecificGDCEncoding:
         nb_neutral = int((1 - self.proba_select) * numberofconnections)
         rest_to_fill = numberofconnections - nb_neutral
         distributed = list(range(self.sizeinputonehot))
+        # pdb.set_trace()
         if rest_to_fill // self.sizeinputonehot == 0:
             msg = "W /!\ guided_dropout / dropconnect: There are 0 connections assigned to some masks.\n"
             msg += "W /!\ Masking will not work properly!\n"
