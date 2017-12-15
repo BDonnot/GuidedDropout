@@ -460,15 +460,16 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
         :return: 
         """
         for var, layerspec in self.masks_spec.items():
-            mask = None
+            initmask = True
             tensors_gdo[var] = {}
             tensors_gdc[var] = {}
             self.encgd[var] = {}
-            firstlauerthismask = -1
+            firstlayerthisvar = -1
             for layernum in layerspec["layers"]:
-                if mask is None or not layerspec["same_mask"]:
+                if initmask or (not layerspec["same_mask"]):
                     # define the mask
-                    proba_select = layerspec["proba_select"]
+                    proba_select = layerspec["proba_select"] if "proba_select" in layerspec else None
+                    nbconnections = layerspec["nbconnections"] if "nbconnections" in layerspec else None
                     var_name = var
                     if not layerspec["same_mask"]:
                         var_name = var + "_"+str(layernum)
@@ -476,6 +477,7 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                         enco = SpecificGDOEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
                                                    sizeout=outputsize,
                                                    proba_select=proba_select,
+                                                   nbconnections=nbconnections,
                                                    path=self.path,
                                                    reload=self.reload,
                                                    name="{}_guided_dropout_encoding".format(var_name))
@@ -485,6 +487,7 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                         nrow = layerspec["nrow"]
                         enco = SpecificGDCEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
                                                    proba_select=proba_select,
+                                                   nbconnections=nbconnections,
                                                    path=self.path,
                                                    reload=self.reload,
                                                    name="{}_guided_droconnect_encoding".format(var_name),
@@ -493,12 +496,12 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                         tensors_gdo[var][layernum] = None
                         tensors_gdc[var][layernum] = enco(self.data[var])
                     self.encgd[var][layernum] = enco
-                    firstlauerthismask = layernum
+                    firstlayerthisvar = layernum
+                    initmask = False
                 elif layerspec["same_mask"]:
-                    # or reuse previous mask
-                    print("reusing mask")
-                    tensors_gdo[var][layernum] = tensors_gdo[var][firstlauerthismask]
-                    tensors_gdc[var][layernum] = tensors_gdc[var][firstlauerthismask]
+                    # or reuse previously defined masks
+                    tensors_gdo[var][layernum] = tensors_gdo[var][firstlayerthisvar]
+                    tensors_gdc[var][layernum] = tensors_gdc[var][firstlayerthisvar]
 
                 if not layernum in masked_var:
                     masked_var[layernum] = {}

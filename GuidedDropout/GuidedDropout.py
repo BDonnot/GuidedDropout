@@ -132,6 +132,7 @@ class EncodingRaw:
 class SpecificGDCEncoding:
     def __init__(self, sizeinputonehot, nrow, ncol,
                  proba_select=0.25, name="guided_dropconnect_encoding",
+                 nbconnections=None,
                  path=".", reload=False):
         """
         Encoding for guided dropconnect
@@ -139,16 +140,20 @@ class SpecificGDCEncoding:
         :param ncol
         :param sizeinputonehot: size of the input vector
         :param probaselect: the probability for a given connection to be selected as a mask
+        :param name: name of the operation
+        :param nbconnections: number of connections used for each dimension of the one-hot input vector (overwrite proba_select)
         :param path: path where mask will be stored
         :param reaload: do you want to reload (T) or build (F) the mask
         """
         self.size_in = nrow
         self.size_out = ncol
         self.proba_select = proba_select
+        self.nb_connections = nbconnections # number of connections per dimension of the one-hot input vector data
         self.sizeinputonehot = sizeinputonehot  # for now works only with one-hot data
+
         choices = self.which_goes_where()
         # build the null element encoding:
-        nullElemenEnc = np.zeros(shape=self.proper_size_init(), dtype=np.float32)
+        nullElemenEnc = np.zeros(shape=self._proper_size_init(), dtype=np.float32)
         nullElemenEnc[choices == self.sizeinputonehot] = 1.
         self.masks = EncodingRaw(num_elem=self.sizeinputonehot, nullElemenEnc=nullElemenEnc)
         self.name_op = name
@@ -161,7 +166,6 @@ class SpecificGDCEncoding:
                 tmp_val = copy.deepcopy(nullElemenEnc)
                 tmp_val[choices == i] = 1
                 self.masks[tmp_key.tostring()] = tmp_val
-                # print(tmp_key.tostring())
             self.masks.save(path=path, name=name)
         else:
             self.masks.reload(path=path, name=name)
@@ -172,23 +176,21 @@ class SpecificGDCEncoding:
         :param x: a tensorflow tensor: the input
         :return: the associated mask
         """
-        res = tf.py_func(func=self.guided_drop, inp=[x], Tout=tf.float32, name=self.name_op)
-        res.set_shape(self.proper_size_tf())
+        res = tf.py_func(func=self._guided_drop, inp=[x], Tout=tf.float32, name=self.name_op)
+        res.set_shape(self._proper_size_tf())
         return res
 
-    def guided_drop(self, x):
+    def _guided_drop(self, x):
         """
         Function that implement guided dropconnect: all element should have the same "tau" values
         :param x: a numpy two dimensional array 
         :return: 
         """
-        # pdb.set_trace()
         test_same_vect = np.apply_along_axis(lambda x: x.tostring(), 1, x)
         if len(np.unique(test_same_vect)) != 1:
             msg = "guided_dropconnect : different vector use for getting the mask. This is for now unsupported."
             raise RuntimeError(msg)
-        x = x[0, :]  # only the first line is relevant here, the other should be equal
-        # todo check stuff before here!
+        x = x[0, :]  # only the first line is relevant here, the other should be equal (guided dropconnect only)
         if x.shape != (self.sizeinputonehot,):
             msg = "guided_dropconnect: you give a vector with size {}, masks are defined with input of size {}".format(
                 x.shape[0], self.sizeinputonehot)
@@ -207,14 +209,19 @@ class SpecificGDCEncoding:
 
         ## try to equilibrate the number of connection per dimension
         numberofconnections = self.size_in * self.size_out
-        nb_neutral = int((1 - self.proba_select) * numberofconnections)
+        if self.nb_connections is None:
+            nb_neutral = int((1 - self.proba_select) * numberofconnections)
+        else:
+            nb_neutral = numberofconnections-self.nb_connections*self.sizeinputonehot
+
         rest_to_fill = numberofconnections - nb_neutral
         distributed = list(range(self.sizeinputonehot))
 
         if rest_to_fill // self.sizeinputonehot == 0:
             msg = "W /!\ guided_dropout / dropconnect: There are 0 connections assigned to some masks.\n"
             msg += "W /!\ Masking will not work properly!\n"
-            msg += "W /!\ Consider adding more units to the masks or increasing 'proba_select'.\n"
+            msg += "W /!\ Consider adding more units to the masks or increasing 'proba_select'"
+            msg += " (or decreasing nbconnections).\n"
             print(msg)
         choices = distributed * (rest_to_fill // self.sizeinputonehot)
         choices += distributed[:(rest_to_fill % self.sizeinputonehot)]
@@ -223,46 +230,51 @@ class SpecificGDCEncoding:
             # make sur the shuffling shuffles properly
             np.random.shuffle(choices)
         choices = np.concatenate((np.array([self.sizeinputonehot] * nb_neutral), choices)) #neutral element always at the beginning
-        choices = choices.reshape(self.proper_size_init())
+        choices = choices.reshape(self._proper_size_init())
         return choices
 
-    def proper_size_tf(self):
+    def _proper_size_tf(self):
         return (self.size_in, self.size_out)
 
-    def proper_size_init(self):
+    def _proper_size_init(self):
         return (self.size_in, self.size_out)
 
 
 class SpecificGDOEncoding(SpecificGDCEncoding):
-    def __init__(self, sizeinputonehot, sizeout, proba_select=0.25,
+    def __init__(self, sizeinputonehot, sizeout, proba_select=0.25, nbconnections=None,
                  name="guided_dropout_encoding",
                  path=".", reload=False):
         """
-
+        
+        :param sizeinputonehot: 
         :param sizeout: 
         :param proba_select: 
+        :param nbconnections: 
+        :param name: 
+        :param path: 
+        :param reload: 
         """
+
         SpecificGDCEncoding.__init__(self, sizeinputonehot=sizeinputonehot, nrow=1,
                                      ncol=sizeout, proba_select=proba_select, name=name,
-                                     path=path, reload=reload)
+                                     path=path, reload=reload, nbconnections=nbconnections)
 
-    def proper_size_init(self):
+    def _proper_size_init(self):
         return self.size_out
 
-    def proper_size_tf(self):
+    def _proper_size_tf(self):
         return tf.Dimension(None), self.size_out
 
-    def guided_drop(self, x):
+    def _guided_drop(self, x):
         """
         Function that implement guided dropout: each element can have a different tau
         :param x: a numpy two dimensional array 
         :return: 
         """
-        res = np.apply_along_axis(func1d=lambda x: self.guided_aux(x), axis=1, arr=x)
+        res = np.apply_along_axis(func1d=lambda arr: self._guided_aux(arr), axis=1, arr=x)
         return res
 
-    def guided_aux(self, x):
-        # pdb.set_trace()
+    def _guided_aux(self, x):
         xhash = x.astype(np.int).tostring()
         return self.masks[xhash]
 
