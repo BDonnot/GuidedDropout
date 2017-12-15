@@ -210,7 +210,7 @@ class SpecificGDCEncoding:
         nb_neutral = int((1 - self.proba_select) * numberofconnections)
         rest_to_fill = numberofconnections - nb_neutral
         distributed = list(range(self.sizeinputonehot))
-        # pdb.set_trace()
+
         if rest_to_fill // self.sizeinputonehot == 0:
             msg = "W /!\ guided_dropout / dropconnect: There are 0 connections assigned to some masks.\n"
             msg += "W /!\ Masking will not work properly!\n"
@@ -218,11 +218,11 @@ class SpecificGDCEncoding:
             print(msg)
         choices = distributed * (rest_to_fill // self.sizeinputonehot)
         choices += distributed[:(rest_to_fill % self.sizeinputonehot)]
-        choices += [self.sizeinputonehot] * nb_neutral
         choices = np.array(choices)
         for i in range(self.size_out):
             # make sur the shuffling shuffles properly
             np.random.shuffle(choices)
+        choices = np.concatenate((np.array([self.sizeinputonehot] * nb_neutral), choices)) #neutral element always at the beginning
         choices = choices.reshape(self.proper_size_init())
         return choices
 
