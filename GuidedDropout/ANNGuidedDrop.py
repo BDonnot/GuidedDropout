@@ -155,11 +155,17 @@ class ComplexGraphWithGD(ComplexGraph):
                  args_dec=(), kwargs_dec={},
                  kwargs_enc_dec=None,
                  spec_encoding={},
-                 dropout_spec={}, dropconnect_spec={}):
+                 dropout_spec={}, dropconnect_spec={},
+                 has_vae=False,
+                 latent_dim_size=None,
+                 latent_hidden_layers=(),
+                 latent_keep_prob=None
+                 ):
         """
         This class derived from TensorflowHelpers.ComplexGraph, and implement guided dropout or guided dropconnect
         The parameters are the same as in "TensorflowHelpers.ComplexGraph"
-        For recall (may not be up to date, please refer to the officiel documentation of TensorflowHelpers.ComplexGraph for a more complete information)
+        For recall (may not be up to date, please refer to the official documentation of TensorflowHelpers.ComplexGraph
+        for a more complete information)
         
         :param data: the dictionnary of input tensor data (key=name, value=tensorflow tensor)
         :param var_x_name: iterable: the names of all the input variables
@@ -179,7 +185,13 @@ class ComplexGraphWithGD(ComplexGraph):
         :param dropconnect_spec
         :param path: path of the experiment
         :param reload: should the mask be reloaded or build from scratch
+        
+        :param has_vae: do you want to add a variationnal auto encoder (between the output of the intermediate neural network and the decoders) 
+        :param latent_dim_size: the size of the latent space (int)
+        :param latent_hidden_layers: the number of hidden layers of the latent space (ordered iterable of integer)
+        :param latent_keep_prob: keep probability for regular dropout for the building of the latent space (affect only the mean)
         """
+
         modifkwargsNN = copy.deepcopy(kwargsNN)
         dict_kargs = {}
         self._check_everything_ok(modifkwargsNN, dict_kargs)
@@ -203,7 +215,12 @@ class ComplexGraphWithGD(ComplexGraph):
                               nnType=nnType, argsNN=argsNN, kwargsNN=modifkwargsNN,
                               encDecNN=encDecNN, args_enc=args_enc, kwargs_enc=kwargs_enc,
                               args_dec=args_dec, kwargs_dec=kwargs_dec, kwargs_enc_dec=kwargs_enc_dec,
-                              spec_encoding=spec_encoding)
+                              spec_encoding=spec_encoding,
+                              has_vae=has_vae,
+                              latent_dim_size=latent_dim_size,
+                              latent_hidden_layers=latent_hidden_layers,
+                              latent_keep_prob=latent_keep_prob
+                              )
 
     def _logical_or(self, x, y, name="logical_or"):
         """
@@ -333,7 +350,11 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                  args_dec=(), kwargs_dec={},
                  kwargs_enc_dec=None,
                  spec_encoding={},
-                 masks_spec={}):
+                 masks_spec={},
+                 has_vae=False,
+                 latent_dim_size=None,
+                 latent_hidden_layers=(),
+                 latent_keep_prob=None):
         """
         This class derived from TensorflowHelpers.ComplexGraph, and implement guided dropout or guided dropconnect.
         The parameters are the same as in "TensorflowHelpers.ComplexGraph"
@@ -362,6 +383,11 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
             "layers" : a list of integer (This represent the layers for which this variable will be used as a mask)
             "dropout" : True/False (do you want to use dropout if True, or dropconnect if False)
             "proba_select": the probability for a connection to be selected
+            
+        :param has_vae: do you want to add a variationnal auto encoder (between the output of the intermediate neural network and the decoders) 
+        :param latent_dim_size: the size of the latent space (int)
+        :param latent_hidden_layers: the number of hidden layers of the latent space (ordered iterable of integer)
+        :param latent_keep_prob: keep probability for regular dropout for the building of the latent space (affect only the mean)
         """
 
         self.masks_spec = masks_spec
@@ -378,7 +404,11 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                                     args_dec=args_dec, kwargs_dec=kwargs_dec, kwargs_enc_dec=kwargs_enc_dec,
                                     spec_encoding=spec_encoding, path=path,
                                     dropout_spec={}, dropconnect_spec={}, # this won't be use anyway in here, but rather in masks_spec when building the layers
-                                    reload=reload)
+                                    reload=reload,
+                                    has_vae=has_vae,
+                                    latent_dim_size=latent_dim_size,
+                                    latent_hidden_layers=latent_hidden_layers,
+                                    latent_keep_prob=latent_keep_prob)
 
     def _update_multiple_mask(self, dict_kargs, var):
         """
