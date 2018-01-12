@@ -84,6 +84,8 @@ class EncodingRaw:
         :return: 
         """
         # pdb.set_trace()
+        path = re.sub("\"", "", path)
+        name = re.sub("\"", "", name)
         mypath = os.path.join(path, name)
         if not os.path.exists(mypath):
             msg = "E: EncodingRaw.reload: the directory {} doest not exists".format(mypath)
