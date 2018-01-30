@@ -250,9 +250,13 @@ class ComplexGraphWithGD(ComplexGraph):
                 msg = "Error: ComplexGraphWithGD: the fields \"proba_select\" in \"dropout_spec\" is not specified"
                 raise RuntimeError(msg)
             proba_select = dropout_spec["proba_select"]
+            if isinstance(proba_select, type(0.)):
+                pb_sel_var = proba_select
+            else:
+                pb_sel_var = proba_select[var]
             self.encgd[var] = SpecificGDOEncoding(sizeinputonehot=int(data[var].get_shape()[1]),
                                                   sizeout=outputsize,
-                                                  proba_select=proba_select[var],
+                                                  proba_select=pb_sel_var,
                                                   path=path,
                                                   reload=reload,
                                                   name="{}_guided_dropout_encoding".format(var))
