@@ -135,7 +135,8 @@ class SpecificGDCEncoding:
     def __init__(self, sizeinputonehot, nrow, ncol,
                  proba_select=0.25, name="guided_dropconnect_encoding",
                  nbconnections=None,
-                 path=".", reload=False):
+                 path=".", reload=False,
+                 keep_prob=None):
         """
         Encoding for guided dropconnect
         :param nrow
@@ -146,13 +147,23 @@ class SpecificGDCEncoding:
         :param nbconnections: number of connections used for each dimension of the one-hot input vector (overwrite proba_select)
         :param path: path where mask will be stored
         :param reaload: do you want to reload (T) or build (F) the mask
+        :param keep_prob: the keeping probability for regular dropout (applied only in the units not "guided dropout'ed")
         """
         self.size_in = nrow
         self.size_out = ncol
         self.proba_select = proba_select
+
         self.nb_connections = nbconnections # number of connections per dimension of the one-hot input vector data
         self.sizeinputonehot = sizeinputonehot  # for now works only with one-hot data
+        self.keep_prob = keep_prob
+        if self.keep_prob == 1.:
+            self.keep_prob = None
+        if keep_prob is not None:
+            if not 0 < keep_prob <= 1:
+                    raise ValueError("SpecificGDCEncoding.__init__ keep_prob must be a float in the "
+                                     "range (0, 1], got %g" % keep_prob)
 
+        self.nb_neutral = None  # init in the method bellows
         choices = self.which_goes_where()
         # build the null element encoding:
         nullElemenEnc = np.zeros(shape=self._proper_size_init(), dtype=np.float32)
@@ -200,7 +211,29 @@ class SpecificGDCEncoding:
         x = x.reshape(self.sizeinputonehot)
         x = x.astype(np.int)
         xhash = x.tostring()
-        return self.masks[xhash]
+        res = self.masks[xhash]
+        if self.proba_select is not None:
+            res = self.dropout(res)
+        return res
+    
+    def dropout(self, res):
+        """
+        Implement regular dropout in units always present
+        inspired from tensorflow dropout implmentation at 
+        https://github.com/tensorflow/tensorflow/blob/r1.5/tensorflow/python/ops/nn_ops.py
+        :param res: 
+        :return: 
+        """
+        noise_shape = res.shape
+        noise_shape = (noise_shape[0], self.nb_neutral)
+        random_tensor = self.keep_prob
+        random_tensor += np.random.uniform(noise_shape)
+        binary_tensor = np.concatenate((np.floor(random_tensor),
+                                        np.ones((noise_shape[0], res.shape[1] - noise_shape[1]))),
+                                       axis=1
+                                       )
+        res = res / self.keep_prob * binary_tensor
+        return res
 
     def which_goes_where(self):
         """
@@ -212,11 +245,11 @@ class SpecificGDCEncoding:
         ## try to equilibrate the number of connection per dimension
         numberofconnections = self.size_in * self.size_out
         if self.nb_connections is None:
-            nb_neutral = int((1 - self.proba_select) * numberofconnections)
+            self.nb_neutral = int((1 - self.proba_select) * numberofconnections)
         else:
-            nb_neutral = numberofconnections-self.nb_connections*self.sizeinputonehot
+            self.nb_neutral = numberofconnections-self.nb_connections*self.sizeinputonehot
 
-        rest_to_fill = numberofconnections - nb_neutral
+        rest_to_fill = numberofconnections - self.nb_neutral
         distributed = list(range(self.sizeinputonehot))
 
         if rest_to_fill // self.sizeinputonehot == 0:
@@ -231,7 +264,7 @@ class SpecificGDCEncoding:
         for i in range(self.size_out):
             # make sur the shuffling shuffles properly
             np.random.shuffle(choices)
-        choices = np.concatenate((np.array([self.sizeinputonehot] * nb_neutral), choices)) #neutral element always at the beginning
+        choices = np.concatenate((np.array([self.sizeinputonehot] * self.nb_neutral), choices)) #neutral element always at the beginning
         choices = choices.reshape(self._proper_size_init())
         return choices
 
@@ -245,7 +278,8 @@ class SpecificGDCEncoding:
 class SpecificGDOEncoding(SpecificGDCEncoding):
     def __init__(self, sizeinputonehot, sizeout, proba_select=0.25, nbconnections=None,
                  name="guided_dropout_encoding",
-                 path=".", reload=False):
+                 path=".", reload=False,
+                 keep_prob=None):
         """
         
         :param sizeinputonehot: 
@@ -255,11 +289,13 @@ class SpecificGDOEncoding(SpecificGDCEncoding):
         :param name: 
         :param path: 
         :param reload: 
+        :param keep_prob
         """
 
         SpecificGDCEncoding.__init__(self, sizeinputonehot=sizeinputonehot, nrow=1,
                                      ncol=sizeout, proba_select=proba_select, name=name,
-                                     path=path, reload=reload, nbconnections=nbconnections)
+                                     path=path, reload=reload, nbconnections=nbconnections,
+                                     keep_prob=keep_prob)
 
     def _proper_size_init(self):
         return self.size_out
@@ -278,7 +314,10 @@ class SpecificGDOEncoding(SpecificGDCEncoding):
 
     def _guided_aux(self, x):
         xhash = x.astype(np.int).tostring()
-        return self.masks[xhash]
+        res = self.masks[xhash]
+        if self.proba_select is not None:
+            res = self.dropout(res)
+        return res
 
 
 if __name__ == "__main__":

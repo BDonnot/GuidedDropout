@@ -90,13 +90,16 @@ class DenseLayerwithGD:
                 res = tf.add(res, self.b, name="adding_bias")
                 self.flops += size  # vectors addition of size "size"
 
+            self.gd_enc = None  # the "encoded latent space" (after applying guided dropout, and before any non linearity)
+            if guided_dropout_mask is not None:
+                res = tf.multiply(res, guided_dropout_mask, name="applying_guided_dropout")
+                self.mask = guided_dropout_mask
+                self.gd_enc = res
+                self.flops += size
+
             if relu:
                 res = tf.nn.relu(res, name="applying_relu")
                 self.flops += size  # we consider relu of requiring 1 computation per number (one max)
-
-            if guided_dropout_mask is not None:
-                res = tf.multiply(res, guided_dropout_mask, name="applying_guided_dropout")
-                self.flops += size
 
             if keep_prob is not None:
                 res = tf.nn.dropout(res, keep_prob=keep_prob, name="applying_dropout")
@@ -504,6 +507,7 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                     # define the mask
                     proba_select = layerspec["proba_select"] if "proba_select" in layerspec else None
                     nbconnections = layerspec["nbconnections"] if "nbconnections" in layerspec else None
+                    keep_prob = layerspec["keep_prob"] if "keep_prob" in layerspec else None
                     var_name = var
                     if not layerspec["same_mask"]:
                         var_name = var + "_"+str(layernum)
@@ -514,7 +518,8 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                                                    nbconnections=nbconnections,
                                                    path=self.path,
                                                    reload=self.reload,
-                                                   name="{}_guided_dropout_encoding".format(var_name))
+                                                   name="{}_guided_dropout_encoding".format(var_name),
+                                                   keep_prob=keep_prob)
                         tensors_gdo[var][layernum] = enco(self.data[var])
                         tensors_gdc[var][layernum] = None
                     else:
@@ -526,7 +531,8 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                                                    reload=self.reload,
                                                    name="{}_guided_droconnect_encoding".format(var_name),
                                                    nrow=nrow,
-                                                   ncol=outputsize)
+                                                   ncol=outputsize,
+                                                   keep_prob=keep_prob)
                         tensors_gdo[var][layernum] = None
                         tensors_gdc[var][layernum] = enco(self.data[var])
                     self.encgd[var][layernum] = enco
