@@ -90,11 +90,12 @@ class DenseLayerwithGD:
                 res = tf.add(res, self.b, name="adding_bias")
                 self.flops += size  # vectors addition of size "size"
 
-            self.gd_enc = None  # the "encoded latent space" (after applying guided dropout, and before any non linearity)
+            self.after_layer = res  # the "encoded latent space" (after applying guided dropout, and before any non linearity)
+            self.after_gd = res  # the "encoded latent space" (after applying guided dropout, and before any non linearity)
             if guided_dropout_mask is not None:
                 res = tf.multiply(res, guided_dropout_mask, name="applying_guided_dropout")
                 self.mask = guided_dropout_mask
-                self.gd_enc = res
+                self.after_gd = res
                 self.flops += size
 
             if relu:
