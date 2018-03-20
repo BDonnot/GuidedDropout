@@ -19,14 +19,13 @@ class DenseLayerwithGD:
                  keep_prob=None, layernum=0,
                  guided_dropout_mask=None,
                  guided_dropconnect_mask=None
-                # kwardslayer = {"guided_dropout_mask": None, "guided_dropconnect_mask" : None}
     ):
         """
         Implement the guided dropout and guided dropconnect case.
         for weight normalization see https://arxiv.org/abs/1602.07868
         for counting the flops of operations see https://mediatum.ub.tum.de/doc/625604/625604
         :param input: input of the layer 
-        :param size: layer size (number of outputs units)
+        :param size: size of the latent space (which is also the size of the mask)
         :param relu: do you use relu ?
         :param bias: do you add bias ?
         :param guided_dropconnect_mask: tensor of the mask matrix  #TODO 
@@ -48,18 +47,25 @@ class DenseLayerwithGD:
         # guided_dropout_mask = kwardslayer["guided_dropout_mask"]
 
         with tf.variable_scope("dense_layer_{}".format(layernum)):
-            self.w_ = tf.get_variable(name="weights_matrix",
+            self.w_e = tf.get_variable(name="weights_matrix_enc",
                                       shape=[nin_, size],
                                       initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
                                       # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weights_matrix:0"),
-                                      trainable=True)  # weight matrix
+                                      trainable=True)
+            self.nbparams += int(nin_ * size)
+            self.w_d = tf.get_variable(name="weights_matrix_dec",
+                                      shape=[nin_, size],
+                                      initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
+                                      # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weights_matrix:0"),
+                                      trainable=True)
             self.nbparams += int(nin_ * size)
 
             if weight_normalization:
+                raise RuntimeError("weight normalization not implemented yet")
                 self.weightnormed = True
                 self.g = tf.get_variable(shape=[size],
                                          name="weight_normalization_g",
-                                         initializer=tf.constant_initializer(value=1.0, dtype="float32"),
+                                         initializer=tf.constant_initializer(value=0.0, dtype="float32"),
                                          # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weight_normalization_g:0"),
                                          trainable=True)
                 self.nbparams += int(size)
@@ -70,9 +76,10 @@ class DenseLayerwithGD:
                 self.w = tf.multiply(self.scaled_matrix, self.g, name="weight_normalization_weights")
                 self.flops += 2 * nin_ - 1  # multiplication by g (matrix vector product)
             else:
-                self.w = self.w_
+                self.w = self.w_e
 
             if guided_dropconnect_mask is not None:
+                raise RuntimeError("guided dropconnect not implemented yet")
                 self.w = tf.multiply(self.w, guided_dropconnect_mask, name="applying_guided_dropconnect")
                 self.flops += nin_*size
 
@@ -82,7 +89,7 @@ class DenseLayerwithGD:
             if bias:
                 self.bias = True
                 self.b = tf.get_variable(shape=[size],
-                                         initializer=tf.constant_initializer(value=0.0, dtype="float32"),
+                                         initializer=tf.constant_initializer(value=1.0, dtype="float32"),
                                          # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/bias:0"),
                                          name="bias",
                                          trainable=True)
@@ -92,11 +99,14 @@ class DenseLayerwithGD:
 
             self.after_layer = res  # the "encoded latent space" (after applying guided dropout, and before any non linearity)
             self.after_gd = res  # the "encoded latent space" (after applying guided dropout, and before any non linearity)
+
             if guided_dropout_mask is not None:
                 res = tf.multiply(res, guided_dropout_mask, name="applying_guided_dropout")
                 self.mask = guided_dropout_mask
                 self.after_gd = res
                 self.flops += size
+
+            res = tf.matmul(self.input, self.w_d, name="out_latent_space")
 
             if relu:
                 res = tf.nn.relu(res, name="applying_relu")
@@ -108,7 +118,8 @@ class DenseLayerwithGD:
                 self.flops += size  # generate the "size" real random numbers
                 self.flops += size  # building the 0-1 vector of size "size" (thresholding "size" random values)
                 self.flops += size  # element wise multiplication with res
-            self.res = res
+                
+            self.res = tf.add(res, input, name="integrate_gd_modifications")
 
     def initwn(self, sess, scale_init=1.0):
         """
