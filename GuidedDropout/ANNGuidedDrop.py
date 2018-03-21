@@ -54,7 +54,7 @@ class DenseLayerwithGD:
                                       trainable=True)
             self.nbparams += int(nin_ * size)
             self.w_d = tf.get_variable(name="weights_matrix_dec",
-                                      shape=[nin_, size],
+                                      shape=[size, nin_],
                                       initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
                                       # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weights_matrix:0"),
                                       trainable=True)
@@ -106,20 +106,24 @@ class DenseLayerwithGD:
                 self.after_gd = res
                 self.flops += size
 
-            res = tf.matmul(self.input, self.w_d, name="out_latent_space")
+            res = tf.matmul(res, self.w_d, name="out_latent_space")
+            self.flops += 2 * nin_ * size - nin_
+
+            self.res = tf.add(res, input, name="integrate_gd_modifications")
+            self.flops += size
 
             if relu:
-                res = tf.nn.relu(res, name="applying_relu")
+                self.res = tf.nn.relu(self.res, name="applying_relu")
                 self.flops += size  # we consider relu of requiring 1 computation per number (one max)
 
             if keep_prob is not None:
-                res = tf.nn.dropout(res, keep_prob=keep_prob, name="applying_dropout")
+                self.res = tf.nn.dropout(self.res, keep_prob=keep_prob, name="applying_dropout")
                 # we consider that generating random number count for 1 operation
                 self.flops += size  # generate the "size" real random numbers
                 self.flops += size  # building the 0-1 vector of size "size" (thresholding "size" random values)
                 self.flops += size  # element wise multiplication with res
-                
-            self.res = tf.add(res, input, name="integrate_gd_modifications")
+
+
 
     def initwn(self, sess, scale_init=1.0):
         """

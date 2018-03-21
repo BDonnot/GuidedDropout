@@ -150,7 +150,7 @@ class SpecificGDCEncoding:
         :param keep_prob: the keeping probability for regular dropout (applied only in the units not "guided dropout'ed")
         """
         self.size_in = nrow
-        self.size_out = ncol
+        # self.size_out = ncol
         self.proba_select = proba_select
 
         self.nb_connections = nbconnections # number of connections per dimension of the one-hot input vector data
@@ -241,14 +241,13 @@ class SpecificGDCEncoding:
         :return: a vector of the proper shape, with integer between 0 and "ndim*" stating which connection is assigned 
         :return: to which mask. (connections numbered ndim are assign to the "null element" encoding)
         """
-
+        self.size_out = self.nb_connections*self.sizeinputonehot
         ## try to equilibrate the number of connection per dimension
         numberofconnections = self.size_in * self.size_out
         if self.nb_connections is None:
             self.nb_neutral = int((1 - self.proba_select) * numberofconnections)
         else:
             self.nb_neutral = numberofconnections-self.nb_connections*self.sizeinputonehot
-
         rest_to_fill = numberofconnections - self.nb_neutral
         distributed = list(range(self.sizeinputonehot))
 
