@@ -186,7 +186,7 @@ class SpecificGDCEncoding:
     def __call__(self, x):
         """
         Convert the input 'x' in the associated guided dropconnect mask
-        :param x: a tensorflow tensor: the input
+        :param x: a tensorflow tensor: the one hot input
         :return: the associated mask
         """
         res = tf.py_func(func=self._guided_drop, inp=[x], Tout=tf.float32, name=self.name_op)
@@ -265,6 +265,7 @@ class SpecificGDCEncoding:
             np.random.shuffle(choices)
         choices = np.concatenate((np.array([self.sizeinputonehot] * self.nb_neutral), choices)) #neutral element always at the beginning
         choices = choices.reshape(self._proper_size_init())
+        # pdb.set_trace()
         return choices
 
     def _proper_size_tf(self):
@@ -295,6 +296,20 @@ class SpecificGDOEncoding(SpecificGDCEncoding):
                                      ncol=sizeout, proba_select=proba_select, name=name,
                                      path=path, reload=reload, nbconnections=nbconnections,
                                      keep_prob=keep_prob)
+
+        eye = np.identity(sizeinputonehot, dtype=np.float32)
+        eye = np.concatenate([eye for _ in range(nbconnections)], axis=1)
+        self.mat = tf.convert_to_tensor(eye)
+
+    def __call__(self, x):
+        """
+        Convert the input 'x' in the associated guided dropconnect mask
+        :param x: a tensorflow tensor: the one hot input
+        :return: the associated mask
+        """
+        res = tf.matmul(x, self.mat, name="building_mask")
+        # res.set_shape(self._proper_size_tf())
+        return res
 
     def _proper_size_init(self):
         return self.size_out

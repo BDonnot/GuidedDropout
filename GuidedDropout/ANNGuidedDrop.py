@@ -433,6 +433,7 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                                     latent_hidden_layers=latent_hidden_layers,
                                     latent_keep_prob=latent_keep_prob)
 
+
     def _update_multiple_mask(self, dict_kargs, var):
         """
         For this class, you don't need to do the "logical_or" elementwise for guided dropout.
@@ -476,8 +477,9 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
             tmp_kwl = copy.deepcopy(kwargsNN["kwardslayer"])
             if not "kwardslayer" in tmp_kwl:
                 tmp_kwl["kwardslayer"] = {}
-            tmp_kwl["kwardslayer"]["guided_dropout_mask"] = masked_var[i]["guided_dropout_mask"]
-            tmp_kwl["kwardslayer"]["guided_dropconnect_mask"] = masked_var[i]["guided_dropconnect_mask"]
+            if i in masked_var:
+                tmp_kwl["kwardslayer"]["guided_dropout_mask"] = masked_var[i]["guided_dropout_mask"]
+                tmp_kwl["kwardslayer"]["guided_dropconnect_mask"] = masked_var[i]["guided_dropconnect_mask"]
             kwardslayers.append(tmp_kwl)
         # pdb.set_trace()
         kwargsNN["kwardslayer"] = kwardslayers
