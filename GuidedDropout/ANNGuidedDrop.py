@@ -178,7 +178,8 @@ class ComplexGraphWithGD(ComplexGraph):
                  has_vae=False,
                  latent_dim_size=None,
                  latent_hidden_layers=(),
-                 latent_keep_prob=None
+                 latent_keep_prob=None,
+                 penalty_loss=0.0001
                  ):
         """
         This class derived from TensorflowHelpers.ComplexGraph, and implement guided dropout or guided dropconnect
@@ -209,6 +210,7 @@ class ComplexGraphWithGD(ComplexGraph):
         :param latent_dim_size: the size of the latent space (int)
         :param latent_hidden_layers: the number of hidden layers of the latent space (ordered iterable of integer)
         :param latent_keep_prob: keep probability for regular dropout for the building of the latent space (affect only the mean)
+        :param penalty_loss : penalty to have e and d clsoe to 0 (None for deactivating it)
         """
 
         modifkwargsNN = copy.deepcopy(kwargsNN)
@@ -216,6 +218,8 @@ class ComplexGraphWithGD(ComplexGraph):
         self._check_everything_ok(modifkwargsNN, dict_kargs)
         self.encgd = {}
         self.masks = {}
+        self.penalty_loss = penalty_loss
+        self.penalized = {} # set of tensor penalized by l2 loss
 
         # deals with guided dropout
         dict_kargs['guided_dropout_mask'] = None
@@ -481,9 +485,8 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                 tmp_kwl["kwardslayer"]["guided_dropout_mask"] = masked_var[i]["guided_dropout_mask"]
                 tmp_kwl["kwardslayer"]["guided_dropconnect_mask"] = masked_var[i]["guided_dropconnect_mask"]
             kwardslayers.append(tmp_kwl)
-        # pdb.set_trace()
+
         kwargsNN["kwardslayer"] = kwardslayers
-        # pdb.set_trace()
         self.nn = nnType(*argsNN,
                          input=input,
                          outputsize=outputsize,
@@ -577,3 +580,24 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                     msg += " when building the key-word argument of layers (should be in \"graphkwargs\") "
                     msg += " or the \"layers\" argument passed to variable {} of \"masks_spec\" argument of ComplexGraphWithComplexGD."
                     print(msg.format(layernum, var))
+
+    def init_loss(self, loss):
+        """
+        Assign the loss
+        :param loss: the loss tensor use for training (reconstruction loss) : I need to add the KL-divergence loss if vae is used
+        :return:
+        """
+        self.loss = loss
+        if self.penalty_loss is not None:
+            for var, layerspec in self.masks_spec.items():
+                for layernum, gd_val in self.encgd[var].items():
+                    nbconnections = layerspec["nbconnections"] if "nbconnections" in layerspec else 1
+                    layerGD = self.encgd[var][layernum]
+                    lsi_block = self.nn.layers[layernum]
+
+                    loss = tf.add(loss, self.penalty_loss * tf.reduce_sum(self.data[var], axis=1) / nbconnections * (
+                        tf.nn.l2_loss(lsi_block.w_e) + tf.nn.l2_loss(lsi_block.w_d)),
+                        name="adding_penalty_{}_{}".format(var, layernum)
+                    )
+        # pdb.set_trace()
+        return loss
