@@ -219,7 +219,7 @@ class ComplexGraphWithGD(ComplexGraph):
         self.encgd = {}
         self.masks = {}
         self.penalty_loss = penalty_loss
-        self.penalized = {} # set of tensor penalized by l2 loss
+        # self.penalized = {} # set of tensor penalized by l2 loss
 
         # deals with guided dropout
         dict_kargs['guided_dropout_mask'] = None
@@ -381,7 +381,8 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                  has_vae=False,
                  latent_dim_size=None,
                  latent_hidden_layers=(),
-                 latent_keep_prob=None):
+                 latent_keep_prob=None,
+                 penalty_loss=0.001):
         """
         This class derived from TensorflowHelpers.ComplexGraph, and implement guided dropout or guided dropconnect.
         The parameters are the same as in "TensorflowHelpers.ComplexGraph"
@@ -420,6 +421,7 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
         self.masks_spec = masks_spec
         self.path = path
         self.reload = reload
+        self.penalty_loss = penalty_loss
 
         self.mask_used = {var: False for var in masks_spec.keys()}
         ComplexGraphWithGD.__init__(self,
@@ -435,7 +437,8 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                                     has_vae=has_vae,
                                     latent_dim_size=latent_dim_size,
                                     latent_hidden_layers=latent_hidden_layers,
-                                    latent_keep_prob=latent_keep_prob)
+                                    latent_keep_prob=latent_keep_prob,
+                                    penalty_loss=penalty_loss)
 
 
     def _update_multiple_mask(self, dict_kargs, var):
