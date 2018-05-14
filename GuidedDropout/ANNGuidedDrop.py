@@ -598,7 +598,7 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                     layerGD = self.encgd[var][layernum]
                     lsi_block = self.nn.layers[layernum]
 
-                    loss = tf.add(loss, self.penalty_loss * tf.reduce_sum(self.data[var], axis=1) / nbconnections * (
+                    loss = tf.add(loss, self.penalty_loss * tf.reduce_sum(self.data[var]) / nbconnections * (
                         tf.nn.l2_loss(lsi_block.w_e) + tf.nn.l2_loss(lsi_block.w_d)),
                         name="adding_penalty_{}_{}".format(var, layernum)
                     )
