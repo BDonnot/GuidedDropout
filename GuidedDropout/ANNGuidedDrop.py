@@ -602,5 +602,6 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                         tf.nn.l2_loss(lsi_block.w_e) + tf.nn.l2_loss(lsi_block.w_d)),
                         name="adding_penalty_{}_{}".format(var, layernum)
                     )
+        self.loss = loss
         # pdb.set_trace()
         return loss
