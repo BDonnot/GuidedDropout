@@ -9,9 +9,9 @@ import pdb
 import tensorflow as tf
 from .GuidedDropout import SpecificGDOEncoding, SpecificGDCEncoding
 
-from TensorflowHelpers import ComplexGraph, NNFully
+from TensorflowHelpers import ComplexGraph, NNFully, DTYPE_USED
 
-DTYPE_USED=tf.float32
+
 
 #TODO refactor it with DenseLayer directly
 class DenseLayerwithGD:
