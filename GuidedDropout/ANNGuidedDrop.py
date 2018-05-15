@@ -11,6 +11,8 @@ from .GuidedDropout import SpecificGDOEncoding, SpecificGDCEncoding
 
 from TensorflowHelpers import ComplexGraph, NNFully
 
+DTYPE_USED=tf.float32
+
 #TODO refactor it with DenseLayer directly
 class DenseLayerwithGD:
     def __init__(self, input, size,
@@ -49,13 +51,13 @@ class DenseLayerwithGD:
         with tf.variable_scope("dense_layer_{}".format(layernum)):
             self.w_e = tf.get_variable(name="weights_matrix_enc",
                                       shape=[nin_, size],
-                                      initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
+                                      initializer=tf.contrib.layers.xavier_initializer(dtype=DTYPE_USED),
                                       # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weights_matrix:0"),
                                       trainable=True)
             self.nbparams += int(nin_ * size)
             self.w_d = tf.get_variable(name="weights_matrix_dec",
                                       shape=[size, nin_],
-                                      initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
+                                      initializer=tf.contrib.layers.xavier_initializer(dtype=DTYPE_USED),
                                       # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weights_matrix:0"),
                                       trainable=True)
             self.nbparams += int(nin_ * size)
@@ -65,7 +67,7 @@ class DenseLayerwithGD:
                 self.weightnormed = True
                 self.g = tf.get_variable(shape=[size],
                                          name="weight_normalization_g",
-                                         initializer=tf.constant_initializer(value=0.0, dtype="float32"),
+                                         initializer=tf.constant_initializer(value=0.0, dtype=DTYPE_USED),
                                          # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weight_normalization_g:0"),
                                          trainable=True)
                 self.nbparams += int(size)
@@ -89,7 +91,7 @@ class DenseLayerwithGD:
             if bias:
                 self.bias = True
                 self.b = tf.get_variable(shape=[size],
-                                         initializer=tf.constant_initializer(value=1.0, dtype="float32"),
+                                         initializer=tf.constant_initializer(value=1.0, dtype=DTYPE_USED),
                                          # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/bias:0"),
                                          name="bias",
                                          trainable=True)
