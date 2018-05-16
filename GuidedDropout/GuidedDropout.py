@@ -6,7 +6,10 @@ import numpy as np
 import tensorflow as tf
 
 import pdb
-
+try:
+    from TensorflowHelpers import DTYPE_USED
+except ImportError as e:
+    DTYPE_USED = tf.float32
 
 
 class EncodingRaw:
@@ -189,7 +192,7 @@ class SpecificGDCEncoding:
         :param x: a tensorflow tensor: the one hot input
         :return: the associated mask
         """
-        res = tf.py_func(func=self._guided_drop, inp=[x], Tout=tf.float32, name=self.name_op)
+        res = tf.py_func(func=self._guided_drop, inp=[x], Tout=DTYPE_USED, name=self.name_op)
         res.set_shape(self._proper_size_tf())
         return res
 
@@ -299,7 +302,7 @@ class SpecificGDOEncoding(SpecificGDCEncoding):
 
         eye = np.identity(sizeinputonehot, dtype=np.float32)
         eye = np.concatenate([eye for _ in range(nbconnections)], axis=1)
-        self.mat = tf.convert_to_tensor(eye)
+        self.mat = tf.convert_to_tensor(eye, DTYPE_USED)
 
     def __call__(self, x):
         """

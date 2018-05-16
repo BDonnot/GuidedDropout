@@ -7,9 +7,9 @@ import copy
 import pdb
 
 import tensorflow as tf
-from .GuidedDropout import SpecificGDOEncoding, SpecificGDCEncoding
+from .GuidedDropout import SpecificGDOEncoding, SpecificGDCEncoding, DTYPE_USED
 
-from TensorflowHelpers import ComplexGraph, NNFully, DTYPE_USED
+from TensorflowHelpers import ComplexGraph, NNFully
 
 
 
@@ -43,60 +43,79 @@ class DenseLayerwithGD:
         self.flops = 0  # flops for a batch on 1 data
         self.input = input
         self.weightnormed = False
-        self.bias = False
+        self.bias = bias
         self.res = None
         # guided_dropconnect_mask = kwardslayer["guided_dropconnect_mask"]
         # guided_dropout_mask = kwardslayer["guided_dropout_mask"]
 
         with tf.variable_scope("dense_layer_{}".format(layernum)):
-            self.w_e = tf.get_variable(name="weights_matrix_enc",
+            self.w_e_fp32 = tf.get_variable(name="weights_matrix_enc",
                                       shape=[nin_, size],
-                                      initializer=tf.contrib.layers.xavier_initializer(dtype=DTYPE_USED),
+                                      initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
                                       # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weights_matrix:0"),
-                                      trainable=True)
+                                      trainable=True,
+                                      dtype=tf.float32)
+            if DTYPE_USED != tf.float32:
+                self.w_e = tf.cast(self.w_e_fp32, DTYPE_USED)
+            else:
+                self.w_e = self.w_e_fp32
             self.nbparams += int(nin_ * size)
-            self.w_d = tf.get_variable(name="weights_matrix_dec",
+            self.w_d_fp32 = tf.get_variable(name="weights_matrix_dec",
                                       shape=[size, nin_],
-                                      initializer=tf.contrib.layers.xavier_initializer(dtype=DTYPE_USED),
+                                      initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
                                       # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weights_matrix:0"),
-                                      trainable=True)
+                                      trainable=True,
+                                      dtype=tf.float32)
+            if DTYPE_USED != tf.float32:
+                self.w_d = tf.cast(self.w_d_fp32, DTYPE_USED)
+            else:
+                self.w_d = self.w_d_fp32
+
             self.nbparams += int(nin_ * size)
 
             if weight_normalization:
                 raise RuntimeError("weight normalization not implemented yet")
-                self.weightnormed = True
-                self.g = tf.get_variable(shape=[size],
-                                         name="weight_normalization_g",
-                                         initializer=tf.constant_initializer(value=0.0, dtype=DTYPE_USED),
-                                         # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weight_normalization_g:0"),
-                                         trainable=True)
-                self.nbparams += int(size)
-                self.scaled_matrix = tf.nn.l2_normalize(self.w_, dim=0, name="weight_normalization_scaled_matrix")
-                self.flops += size * (
-                2 * nin_ - 1)  # clomputation of ||v|| (size comptuation of inner product of vector of size nin_)
-                self.flops += 2 * nin_ - 1  # division by ||v|| (matrix vector product)
-                self.w = tf.multiply(self.scaled_matrix, self.g, name="weight_normalization_weights")
-                self.flops += 2 * nin_ - 1  # multiplication by g (matrix vector product)
-            else:
-                self.w = self.w_e
+            #     self.weightnormed = True
+            #     self.g = tf.get_variable(shape=[size],
+            #                              name="weight_normalization_g",
+            #                              initializer=tf.constant_initializer(value=0.0, dtype=tf.float32),
+            #                              # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/weight_normalization_g:0"),
+            #                              trainable=True,
+            #                              dtype=tf.float32)
+            #     if DTYPE_USED != tf.float32:
+            #         self.g = tf.cast(self.g, DTYPE_USED)
+            #
+            #     self.nbparams += int(size)
+            #     self.scaled_matrix = tf.nn.l2_normalize(self.w_, dim=0, name="weight_normalization_scaled_matrix")
+            #     self.flops += size * (
+            #     2 * nin_ - 1)  # clomputation of ||v|| (size comptuation of inner product of vector of size nin_)
+            #     self.flops += 2 * nin_ - 1  # division by ||v|| (matrix vector product)
+            #     self.w = tf.multiply(self.scaled_matrix, self.g, name="weight_normalization_weights")
+            #     self.flops += 2 * nin_ - 1  # multiplication by g (matrix vector product)
+            # else:
+            #     self.w = self.w_e
 
             if guided_dropconnect_mask is not None:
                 raise RuntimeError("guided dropconnect not implemented yet")
-                self.w = tf.multiply(self.w, guided_dropconnect_mask, name="applying_guided_dropconnect")
-                self.flops += nin_*size
+                # self.w = tf.multiply(self.w, guided_dropconnect_mask, name="applying_guided_dropconnect")
+                # self.flops += nin_*size
 
-            res = tf.matmul(self.input, self.w, name="multiplying_weight_matrix")
+            res = tf.matmul(self.input, self.w_e, name="multiplying_weight_matrix")
             self.flops += 2 * nin_ * size - size
 
             if bias:
                 self.bias = True
                 self.b = tf.get_variable(shape=[size],
-                                         initializer=tf.constant_initializer(value=1.0, dtype=DTYPE_USED),
+                                         initializer=tf.constant_initializer(value=1.0, dtype=tf.float32),
                                          # initializer=tf.get_default_graph().get_tensor_by_name(tf.get_variable_scope().name+"/bias:0"),
                                          name="bias",
-                                         trainable=True)
+                                         trainable=True,
+                                      dtype=tf.float32)
+                if DTYPE_USED != tf.float32:
+                    self.b = tf.cast(self.b, DTYPE_USED)
+
                 self.nbparams += int(size)
-                res = tf.add(res, self.b, name="adding_bias")
+                res = tf.add(res, self.b, name="adding_bias_e")
                 self.flops += size  # vectors addition of size "size"
 
             self.after_layer = res  # the "encoded latent space" (after applying guided dropout, and before any non linearity)
@@ -590,6 +609,7 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
         """
         Assign the loss
         :param loss: the loss tensor use for training (reconstruction loss) : I need to add the KL-divergence loss if vae is used
+                    this tensor must be in tf.float32 type
         :return:
         """
         self.loss = loss
@@ -597,11 +617,11 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
             for var, layerspec in self.masks_spec.items():
                 for layernum, gd_val in self.encgd[var].items():
                     nbconnections = layerspec["nbconnections"] if "nbconnections" in layerspec else 1
-                    layerGD = self.encgd[var][layernum]
+                    # layerGD = self.encgd[var][layernum]
                     lsi_block = self.nn.layers[layernum]
 
-                    loss = tf.add(loss, self.penalty_loss * tf.reduce_sum(self.data[var]) / nbconnections * (
-                        tf.nn.l2_loss(lsi_block.w_e) + tf.nn.l2_loss(lsi_block.w_d)),
+                    loss = tf.add(loss, self.penalty_loss * tf.reduce_sum(tf.cast(self.data[var], tf.float32)) / nbconnections * (
+                        tf.nn.l2_loss(lsi_block.w_e_fp32) + tf.nn.l2_loss(lsi_block.w_d_fp32)),
                         name="adding_penalty_{}_{}".format(var, layernum)
                     )
         self.loss = loss
