@@ -9,7 +9,7 @@ import pdb
 import tensorflow as tf
 from .GuidedDropout import SpecificGDOEncoding, SpecificGDCEncoding, DTYPE_USED
 
-from TensorflowHelpers import ComplexGraph, NNFully
+from TensorflowHelpers import ExpGraph, ComplexGraph, NNFully
 
 
 
@@ -47,8 +47,12 @@ class DenseLayerwithGD:
         self.res = None
         # guided_dropconnect_mask = kwardslayer["guided_dropconnect_mask"]
         # guided_dropout_mask = kwardslayer["guided_dropout_mask"]
+        if guided_dropout_mask is not None or guided_dropconnect_mask is not None:
+            name_layer = "LSI_block_{}".format(layernum)
+        else:
+            name_layer = "residual_block_{}".format(layernum)
 
-        with tf.variable_scope("dense_layer_{}".format(layernum)):
+        with tf.variable_scope(name_layer):
             self.w_e_fp32 = tf.get_variable(name="weights_matrix_enc",
                                       shape=[nin_, size],
                                       initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
@@ -184,6 +188,7 @@ class EmulDenseLayerwithGD(DenseLayerwithGD):
                                    guided_dropconnect_mask=guided_dropconnect_mask,
                                    **kwargs)
 
+
 class ComplexGraphWithGD(ComplexGraph):
     def __init__(self, data,
                  outputsize,
@@ -200,7 +205,8 @@ class ComplexGraphWithGD(ComplexGraph):
                  latent_dim_size=None,
                  latent_hidden_layers=(),
                  latent_keep_prob=None,
-                 penalty_loss=0.0001
+                 penalty_loss=0.0001,
+                 resize_nn=None
                  ):
         """
         This class derived from TensorflowHelpers.ComplexGraph, and implement guided dropout or guided dropconnect
@@ -263,7 +269,8 @@ class ComplexGraphWithGD(ComplexGraph):
                               has_vae=has_vae,
                               latent_dim_size=latent_dim_size,
                               latent_hidden_layers=latent_hidden_layers,
-                              latent_keep_prob=latent_keep_prob
+                              latent_keep_prob=latent_keep_prob,
+                              resize_nn=resize_nn
                               )
 
     def _logical_or(self, x, y, name="logical_or"):
@@ -403,7 +410,8 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                  latent_dim_size=None,
                  latent_hidden_layers=(),
                  latent_keep_prob=None,
-                 penalty_loss=0.001):
+                 penalty_loss=0.001,
+                 resize_nn=None):
         """
         This class derived from TensorflowHelpers.ComplexGraph, and implement guided dropout or guided dropconnect.
         The parameters are the same as in "TensorflowHelpers.ComplexGraph"
@@ -459,7 +467,8 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
                                     latent_dim_size=latent_dim_size,
                                     latent_hidden_layers=latent_hidden_layers,
                                     latent_keep_prob=latent_keep_prob,
-                                    penalty_loss=penalty_loss)
+                                    penalty_loss=penalty_loss,
+                                    resize_nn=resize_nn)
 
 
     def _update_multiple_mask(self, dict_kargs, var):
@@ -511,6 +520,7 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
             kwardslayers.append(tmp_kwl)
 
         kwargsNN["kwardslayer"] = kwardslayers
+        # pdb.set_trace()
         self.nn = nnType(*argsNN,
                          input=input,
                          outputsize=outputsize,
