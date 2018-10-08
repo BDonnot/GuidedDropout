@@ -637,3 +637,373 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
         self.loss = loss
         # pdb.set_trace()
         return loss
+
+from TensorflowHelpers import DenseLayer
+
+class LeapNet:
+    def __init__(self, data,
+                 outputsize,
+                 sizes,
+                 path, reload,
+                 latent_jump=True,
+                 resnet_if_no_jump=True,
+                 # variable as input and output
+                 var_x_name={"input"}, var_y_name={"output"},
+
+                 # pre processing
+                 NN_preproc=NNFully,
+                 args_preproc=(), kwargs_preproc={},
+                 resize_nn=True,
+
+                 # encoder E
+                 nnTypeE=NNFully, argsE=(), kwargsE={},
+                 latent_dim_size=None,
+
+                 # latent leap
+                 ## e
+                 nnType_e=NNFully, args_e=(), kwargs_e={},
+                 # var_leap=[],
+                 var_leap={}, #  before
+                 nb_axis_per_dim_of_tau=1,
+                 ## d
+                 nnType_d=NNFully, args_d=(), kwargs_d={},
+
+                 # decoder D
+                 nnTypeD=NNFully, argsD=(), kwargsD={},
+
+                 # post processing
+                 NN_postproc=NNFully,
+                 args_postproc=(), kwargs_postproc={},
+
+                 ):
+        """
+        """
+        spec_encoding = {}  # specific pre processing of the data, currently not used
+
+        # self.masks_spec = masks_spec
+        # self.path = path
+        # self.reload = reload
+        # self.penalty_loss = penalty_loss
+
+        if len(var_leap) > 1:
+            raise RuntimeError("For now you can only make a latent leap with one variable")
+
+        self.data = data  # the dictionnary of data pre-processed as produced by an ExpData instance
+        self.outputname = var_y_name  # name of the output variable, should be one of the key of self.data
+        self.inputname = var_x_name
+        self.path = path
+        self.reload = reload
+
+        # Preprocess independantly each data types (initialization procedure)
+        if kwargs_preproc is None:
+            """
+            In this case, there will not be any encoders, all the input data will be concatenated
+            """
+            # 1. build the input layer
+            self.dimin = {}  # to memorize which data goes where
+            self.has_preproc = False
+            prev = 0
+            tup = tuple()
+            for el in sorted(self.inputname):
+                if el in spec_encoding:
+                    tup += (spec_encoding[el](self.data[el]),)
+                else:
+                    tup += (self.data[el],)
+                this_size = int(tup[-1].get_shape()[1])
+                self.dimin[el] = (prev, prev + this_size)
+                prev += this_size
+            self.input = tf.concat(tup, axis=1, name="input_concatenantion")
+        else:
+            self.dimin = None
+            self.has_preproc = True
+
+        # dictionnary of "ground truth" data
+        self.true_dataY = {k: self.data[k] for k in self.outputname}
+        self.true_dataX = {k: self.data[k] for k in self.inputname}
+        self.size_in = 0
+        for _,v in self.true_dataX.items():
+            self.size_in += int(v.get_shape()[1])
+
+        # 1. build the encodings neural networks
+        self.output_preproc = {}
+        self.pre_proc = {}
+        if self.has_preproc:
+            self._buildencoders(sizes, spec_encoding, NN_preproc, args_preproc, kwargs_preproc)
+
+            # self.input = tf.zeros(shape=(None, 0), dtype=DTYPE_USED)
+            tup = tuple()
+            for el in sorted(self.inputname):
+                tup += (self.output_preproc[el],)
+            self.enc_output_raw = tf.concat(tup, axis=1, name="encoder_output_concatenantion")
+        else:
+            self.enc_output_raw = self.input
+
+        # 3. build the neural network
+        self.nn = None
+        if resize_nn is not None:
+            self.resize_layer = DenseLayer(input=self.enc_output_raw, size=resize_nn,
+                                           relu=False, bias=False,
+                                           weight_normalization=False,
+                                           keep_prob=None, layernum="resizing_layer")
+            self.enc_output = self.resize_layer.res
+        else:
+            self.resize_layer = None
+            self.enc_output = self.enc_output_raw
+
+        self.h_x = None
+        self.E, self.h_x = self._build(nnType=nnTypeE, args=argsE,
+                               input=self.enc_output,
+                               outputsize=latent_dim_size,
+                               kwargs=kwargsE)
+
+        # make the latent leap
+        if latent_jump or resnet_if_no_jump:
+            var = var_leap[0]
+            size_var = int(self.data[var].get_shape()[1])
+            ## build e
+            self.h_tau_e = None
+            self.e, self.h_tau_e = self._build(nnType=nnType_e, args=args_e,
+                                       input=self.h_x, outputsize=size_var, kwargs=kwargs_e)
+
+            ## at this stage tau is ready to be projected on the axis
+            if latent_jump:
+                enco = SpecificGDOEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
+                                           sizeout=outputsize,
+                                           nbconnections=nb_axis_per_dim_of_tau,
+                                           path=self.path,
+                                           reload=self.reload,
+                                           name="{}_guided_dropout_encoding".format(var),
+                                           keep_prob=None)
+                self.enc_var_gdo = enco(self.data[var])
+                self.h_tau_after_proj = tf.multiply(self.h_tau_e, self.enc_var_gdo)
+            else:
+                self.h_tau_after_proj = self.h_tau_e
+
+            ## build d
+            self.h_tau = None
+            self.d, self.h_tau = self._build(nnType=nnType_d, args=args_d,
+                         input=self.h_tau_after_proj, outputsize=latent_dim_size, kwargs=kwargs_d)
+
+            ## really make the leap now:
+            self.h_after_leap = self.h_x + self.h_tau
+        else:
+            self.d = None
+            self.e = None
+            self.h_tau_e = None
+            self.h_tau = None
+            self.h_tau_after_proj = None
+            self.h_after_leap = self.h_x
+
+        self.D, self.hat_y_tmp = self._build(nnType=nnTypeD, args=argsD,
+                                 input=self.enc_output,
+                                 outputsize=latent_dim_size,
+                                 kwargs=kwargsD)
+
+        # post processing independantly each data types (initialization procedure)
+        if kwargs_postproc is None:
+            """
+            In this case, there will not be any decoders, all the output data will be concatenated
+            """
+            # 2. build the output layer
+            self.dimout = {}  # to memorize which data goes where
+            self.has_postproc = False
+            prev = 0
+            tup = tuple()
+            for el in sorted(self.outputname):
+                tup += (self.data[el],)
+                this_size = int(self.data[el].get_shape()[1])
+                self.dimout[el] = (prev, prev + this_size)
+                prev += this_size
+            self.output = tf.concat(tup, axis=1, name="output_concatenantion")
+        else:
+            self.dimout = None
+            self.has_postproc = True
+
+        self.size_out = 0
+        self.y_hat = {}
+        self.post_proc = {}
+        if self.has_postproc:
+            self._builddecoders(NN_postproc, args_postproc, kwargs_postproc, inputdec=self.hat_y_tmp)
+        else:
+            self.y_hat = {}  # dictionnary of output of the NN
+            for varn in sorted(self.outputname):
+                be, en = self.dimout[varn]
+                self.y_hat[varn] = self.nn.pred[:, be:en]
+
+        # 7. create the fields summary and loss that will be created in ExpModel and assign via "self.init"
+        self.mergedsummaryvar = None
+        self.loss = None
+
+    def _build(self, nnType, args, input, outputsize, kwargs):
+        """
+
+                :param nnType:
+                :param argsNN:
+                :param input:
+                :param outputsize:
+                :param kwargsNN:
+                :return:
+                """
+        try:
+            nn = nnType(*args,
+                             input=input,
+                             outputsize=outputsize,
+                             **kwargs)
+        except Exception as except_:
+            print(except_)
+            pdb.set_trace()
+            raise
+        return nn, nn.pred
+
+    def initwn(self, sess):
+        """
+        Initialize the weights for weight normalization
+        :param sess: a tensorflow session
+        :return:
+        """
+        for _, v in self.pre_proc.items():
+            v.initwn(sess=sess)
+        self.nn.initwn(sess=sess)
+        for _, v in self.post_proc.items():
+            v.initwn(sess=sess)
+
+    def get_true_output_dict(self):
+        """
+        :return: the output data dictionnary. key: varname, value=true value of this data
+        """
+        return self.true_dataY
+
+    def get_input_size(self):
+        """
+        :return: the number of columns (variables) in input
+        """
+        return self.size_in
+
+    def get_output_size(self):
+        """
+        :return: the number of columns (variables) in output
+        """
+        return self.size_out
+
+    def getnbparam(self):
+        """
+        :return:  the number of total free parameters of the neural network"""
+        res = self.resize_layer.nbparams if self.resize_layer is not None else 0
+        for _, v in self.pre_proc.items():
+            res += v.getnbparam()
+        res += self.E.getnbparam()
+        if self.e is not None:
+            res += self.e.getnbparam()
+        if self.d is not None:
+            res += self.d.getnbparam()
+        res += self.D.getnbparam()
+        for _, v in self.post_proc.items():
+            res += v.getnbparam()
+        return res
+
+    def getflop(self):
+        """
+        flops are computed using formulas in https://mediatum.ub.tum.de/doc/625604/625604
+        it takes into account both multiplication and addition.
+        Results are given for a minibatch of 1 example for a single forward pass.
+        :return: the number of flops of the neural network build
+        """
+        res = self.resize_layer.flops if self.resize_layer is not None else 0
+        for _, v in self.pre_proc.items():
+            res += v.getflop()
+        res += self.E.getflop()
+        if self.e is not None:
+            res += self.e.getflop()
+        if self.d is not None:
+            res += self.d.getflop()
+        res += self.D.getflop()
+        for _, v in self.post_proc.items():
+            res += v.getflop()
+        return res
+
+    def _buildencoders(self, sizes, spec_encoding, encDecNN, args_enc, kwargs_enc):
+        """
+        Build the encoder networks
+        :param sizes:
+        :param spec_encoding:
+        :param encDecNN:
+        :param args_enc:
+        :param kwargs_enc:
+        :return:
+        """
+        with tf.variable_scope("preprocessing"):
+            for varname in sorted(self.inputname):
+                with tf.variable_scope(varname):
+                    if not varname in sizes:
+                        msg = "ComplexGraph._buildencoders the variable {} is not in \"sizes\" argument but in \"var_x_name\""
+                        msg += " (or \"var_y_name\")"
+                        raise RuntimeError(msg.format(varname))
+                    size_out = sizes[varname]
+                    if varname in spec_encoding:
+                        input_tmp = spec_encoding[varname](self.data[varname])
+                    else:
+                        input_tmp = self.data[varname]
+                    tmp = encDecNN(*args_enc,
+                                   input=input_tmp,
+                                   outputsize=size_out,
+                                   **kwargs_enc)
+                    self.pre_proc[varname] = tmp
+                    self.post_proc[varname] = tmp.pred
+
+    def _builddecoders(self, encDecNN, args_dec, kwargs_dec, inputdec=None):
+        """
+        Build the decoder networks
+        :param sizes:
+        :param encDecNN:
+        :param args_dec:
+        :param kwargs_dec:
+        :return:
+        """
+        with tf.variable_scope("postprocessing"):
+            if inputdec is None:
+                inputdec = self.nn.pred
+            for varname in sorted(self.outputname):
+                with tf.variable_scope(varname):
+                    # size_out = sizes[varname]
+                    tmp = encDecNN(*args_dec,
+                                   input=inputdec,
+                                   outputsize=int(self.data[varname].get_shape()[1]),
+                                   **kwargs_dec)
+                    self.post_proc[varname] = tmp
+                    self.y_hat[varname] = tmp.pred
+                    self.size_out += int(tmp.pred.get_shape()[1])
+
+    def _have_latent_space(self):
+        return False
+
+    def init_loss(self, loss):
+        """
+        Assign the loss
+        :param loss: the loss tensor use for training (reconstruction loss) : I need to add the KL-divergence loss if vae is used
+        :return:
+        """
+        self.loss = loss
+        return loss
+
+    def init_summary(self, mergedsummaryvar):
+        """
+        Assign the summary 'mergedsummaryvar' for easier access
+        :param mergedsummaryvar: the summary of everything to be save by tensorboard
+        :return:
+        """
+        self.mergedsummaryvar = mergedsummaryvar
+
+    def startexp(self, sess):
+        """
+        TODO documentation
+        :param sess:
+        :return:
+        """
+        pass
+
+    def tell_epoch(self, sess, epochnum):
+        """
+        TODO documentation
+        :return:
+        """
+        pass
