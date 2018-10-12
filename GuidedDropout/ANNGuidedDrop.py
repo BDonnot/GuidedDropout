@@ -645,6 +645,8 @@ class LeapNet:
                  outputsize,
                  sizes,
                  path, reload,
+                 latent_dim_size,
+
                  latent_jump=True,
                  resnet_if_no_jump=True,
                  # variable as input and output
@@ -657,13 +659,12 @@ class LeapNet:
 
                  # encoder E
                  nnTypeE=NNFully, argsE=(), kwargsE={},
-                 latent_dim_size=None,
 
                  # latent leap
                  ## e
                  nnType_e=NNFully, args_e=(), kwargs_e={},
-                 # var_leap=[],
-                 var_leap={}, #  before
+                 var_leap=[],
+                 # var_leap={}, #  before
                  nb_axis_per_dim_of_tau=1,
                  ## d
                  nnType_d=NNFully, args_d=(), kwargs_d={},
@@ -693,146 +694,162 @@ class LeapNet:
         self.inputname = var_x_name
         self.path = path
         self.reload = reload
-
-        # Preprocess independantly each data types (initialization procedure)
-        if kwargs_preproc is None:
-            """
-            In this case, there will not be any encoders, all the input data will be concatenated
-            """
-            # 1. build the input layer
-            self.dimin = {}  # to memorize which data goes where
-            self.has_preproc = False
-            prev = 0
-            tup = tuple()
-            for el in sorted(self.inputname):
-                if el in spec_encoding:
-                    tup += (spec_encoding[el](self.data[el]),)
-                else:
-                    tup += (self.data[el],)
-                this_size = int(tup[-1].get_shape()[1])
-                self.dimin[el] = (prev, prev + this_size)
-                prev += this_size
-            self.input = tf.concat(tup, axis=1, name="input_concatenantion")
-        else:
-            self.dimin = None
-            self.has_preproc = True
+        # self.vars_out = var_y_name
 
         # dictionnary of "ground truth" data
         self.true_dataY = {k: self.data[k] for k in self.outputname}
         self.true_dataX = {k: self.data[k] for k in self.inputname}
         self.size_in = 0
-        for _,v in self.true_dataX.items():
+        for _, v in self.true_dataX.items():
             self.size_in += int(v.get_shape()[1])
 
-        # 1. build the encodings neural networks
-        self.output_preproc = {}
-        self.pre_proc = {}
-        if self.has_preproc:
-            self._buildencoders(sizes, spec_encoding, NN_preproc, args_preproc, kwargs_preproc)
+        self.size_out = 0
+        for _, v in self.true_dataY.items():
+            self.size_out += int(v.get_shape()[1])
 
-            # self.input = tf.zeros(shape=(None, 0), dtype=DTYPE_USED)
-            tup = tuple()
-            for el in sorted(self.inputname):
-                tup += (self.output_preproc[el],)
-            self.enc_output_raw = tf.concat(tup, axis=1, name="encoder_output_concatenantion")
-        else:
-            self.enc_output_raw = self.input
+        # Preprocess independantly each data types (initialization procedure)
+        with tf.variable_scope("preprocessing"):
+            if kwargs_preproc is None:
+                """
+                In this case, there will not be any encoders, all the input data will be concatenated
+                """
+                # 1. build the input layer
+                self.dimin = {}  # to memorize which data goes where
+                self.has_preproc = False
+                prev = 0
+                tup = tuple()
+                for el in sorted(self.inputname):
+                    if el in spec_encoding:
+                        tup += (spec_encoding[el](self.data[el]),)
+                    else:
+                        tup += (self.data[el],)
+                    this_size = int(tup[-1].get_shape()[1])
+                    self.dimin[el] = (prev, prev + this_size)
+                    prev += this_size
+                self.input = tf.concat(tup, axis=1, name="input_concatenantion")
+            else:
+                self.dimin = None
+                self.has_preproc = True
+
+            # 1. build the preprocessing NN
+            self.output_preproc = {}
+            self.pre_proc = {}
+            if self.has_preproc:
+                self._buildencoders(sizes, spec_encoding, NN_preproc, args_preproc, kwargs_preproc)
+
+                # self.input = tf.zeros(shape=(None, 0), dtype=DTYPE_USED)
+                tup = tuple()
+                for el in sorted(self.inputname):
+                    tup += (self.output_preproc[el],)
+                self.enc_output_raw = tf.concat(tup, axis=1, name="encoder_output_concatenantion")
+            else:
+                self.enc_output_raw = self.input
 
         # 3. build the neural network
-        self.nn = None
-        if resize_nn is not None:
-            self.resize_layer = DenseLayer(input=self.enc_output_raw, size=resize_nn,
-                                           relu=False, bias=False,
-                                           weight_normalization=False,
-                                           keep_prob=None, layernum="resizing_layer")
-            self.enc_output = self.resize_layer.res
-        else:
-            self.resize_layer = None
-            self.enc_output = self.enc_output_raw
+        with tf.variable_scope("E"):
+            self.nn = None
+            if resize_nn is not None:
+                self.resize_layer = DenseLayer(input=self.enc_output_raw, size=latent_dim_size,
+                                               relu=False, bias=False,
+                                               weight_normalization=False,
+                                               keep_prob=None, layernum="resizing_layer")
+                self.enc_output = self.resize_layer.res
+            else:
+                self.resize_layer = None
+                self.enc_output = self.enc_output_raw
 
-        self.h_x = None
-        self.E, self.h_x = self._build(nnType=nnTypeE, args=argsE,
-                               input=self.enc_output,
-                               outputsize=latent_dim_size,
-                               kwargs=kwargsE)
+            self.h_x = None
+            self.E, self.h_x = self._build(nnType=nnTypeE, args=argsE,
+                                   input=self.enc_output,
+                                   outputsize=latent_dim_size,
+                                   kwargs=kwargsE)
 
         # make the latent leap
         if latent_jump or resnet_if_no_jump:
             var = var_leap[0]
-            size_var = int(self.data[var].get_shape()[1])
-            ## build e
-            self.h_tau_e = None
-            self.e, self.h_tau_e = self._build(nnType=nnType_e, args=args_e,
-                                       input=self.h_x, outputsize=size_var, kwargs=kwargs_e)
+            size_var = int(self.data[var].get_shape()[1])*nb_axis_per_dim_of_tau
+            with tf.variable_scope("latent_leap" if latent_jump else "residual_path"):
+                ## build e
+                self.h_tau_e = None
+                with tf.variable_scope("e"):
+                    self.e, self.h_tau_e = self._build(nnType=nnType_e, args=args_e,
+                                               input=self.h_x, outputsize=size_var, kwargs=kwargs_e)
 
-            ## at this stage tau is ready to be projected on the axis
-            if latent_jump:
-                enco = SpecificGDOEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
-                                           sizeout=outputsize,
-                                           nbconnections=nb_axis_per_dim_of_tau,
-                                           path=self.path,
-                                           reload=self.reload,
-                                           name="{}_guided_dropout_encoding".format(var),
-                                           keep_prob=None)
-                self.enc_var_gdo = enco(self.data[var])
-                self.h_tau_after_proj = tf.multiply(self.h_tau_e, self.enc_var_gdo)
-            else:
-                self.h_tau_after_proj = self.h_tau_e
+                ## at this stage tau is ready to be projected on the axis
+                if latent_jump:
 
-            ## build d
-            self.h_tau = None
-            self.d, self.h_tau = self._build(nnType=nnType_d, args=args_d,
-                         input=self.h_tau_after_proj, outputsize=latent_dim_size, kwargs=kwargs_d)
+                    with tf.variable_scope("projection"):
+                        enco = SpecificGDOEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
+                                                   sizeout=outputsize,
+                                                   nbconnections=nb_axis_per_dim_of_tau,
+                                                   path=self.path,
+                                                   reload=self.reload,
+                                                   name="{}_guided_dropout_encoding".format(var),
+                                                   keep_prob=None)
+                        self.enc_var_gdo = enco(self.data[var])
+                        self.h_tau_after_proj = tf.multiply(self.h_tau_e, self.enc_var_gdo)
+                else:
+                    self.h_tau_after_proj = self.h_tau_e
 
-            ## really make the leap now:
-            self.h_after_leap = self.h_x + self.h_tau
+                ## build d
+                self.h_tau = None
+                with tf.variable_scope("d"):
+                    self.d, self.h_tau = self._build(nnType=nnType_d, args=args_d,
+                                 input=self.h_tau_after_proj, outputsize=latent_dim_size, kwargs=kwargs_d)
         else:
             self.d = None
             self.e = None
             self.h_tau_e = None
-            self.h_tau = None
+            self.h_tau = 0.
             self.h_tau_after_proj = None
-            self.h_after_leap = self.h_x
 
-        self.D, self.hat_y_tmp = self._build(nnType=nnTypeD, args=argsD,
-                                 input=self.enc_output,
-                                 outputsize=latent_dim_size,
-                                 kwargs=kwargsD)
+        ## really make the leap now:
+        self.h_after_leap = self.h_x + self.h_tau
+
+        output_D_size = latent_dim_size if kwargs_postproc is not None else self.size_out
+        with tf.variable_scope("D"):
+            self.D, self.hat_y_tmp = self._build(nnType=nnTypeD, args=argsD,
+                                     input=self.h_after_leap,
+                                     outputsize=output_D_size,
+                                     kwargs=kwargsD)
 
         # post processing independantly each data types (initialization procedure)
-        if kwargs_postproc is None:
-            """
-            In this case, there will not be any decoders, all the output data will be concatenated
-            """
-            # 2. build the output layer
-            self.dimout = {}  # to memorize which data goes where
-            self.has_postproc = False
-            prev = 0
-            tup = tuple()
-            for el in sorted(self.outputname):
-                tup += (self.data[el],)
-                this_size = int(self.data[el].get_shape()[1])
-                self.dimout[el] = (prev, prev + this_size)
-                prev += this_size
-            self.output = tf.concat(tup, axis=1, name="output_concatenantion")
-        else:
-            self.dimout = None
-            self.has_postproc = True
 
-        self.size_out = 0
-        self.y_hat = {}
-        self.post_proc = {}
-        if self.has_postproc:
-            self._builddecoders(NN_postproc, args_postproc, kwargs_postproc, inputdec=self.hat_y_tmp)
-        else:
-            self.y_hat = {}  # dictionnary of output of the NN
-            for varn in sorted(self.outputname):
-                be, en = self.dimout[varn]
-                self.y_hat[varn] = self.nn.pred[:, be:en]
+        with tf.variable_scope("post_processing"):
+            if kwargs_postproc is None:
+                """
+                In this case, there will not be any decoders, all the output data will be concatenated
+                """
+                # 2. build the output layer
+                self.dimout = {}  # to memorize which data goes where
+                self.has_postproc = False
+                prev = 0
+                tup = tuple()
+                for el in sorted(self.outputname):
+                    tup += (self.data[el],)
+                    this_size = int(self.data[el].get_shape()[1])
+                    self.dimout[el] = (prev, prev + this_size)
+                    prev += this_size
+                self.output = tf.concat(tup, axis=1, name="output_concatenantion")
+            else:
+                self.dimout = None
+                self.has_postproc = True
+
+            self.y_hat = {}
+            self.post_proc = {}
+            if self.has_postproc:
+                self._builddecoders(NN_postproc, args_postproc, kwargs_postproc, self.hat_y_tmp)
+            else:
+                self.y_hat = {}  # dictionnary of output of the NN
+                for varn in sorted(self.outputname):
+                    be, en = self.dimout[varn]
+                    self.y_hat[varn] = self.hat_y_tmp[:, be:en]
+
 
         # 7. create the fields summary and loss that will be created in ExpModel and assign via "self.init"
         self.mergedsummaryvar = None
         self.loss = None
+        self.vars_out = self.y_hat
 
     def _build(self, nnType, args, input, outputsize, kwargs):
         """
@@ -846,9 +863,9 @@ class LeapNet:
                 """
         try:
             nn = nnType(*args,
-                             input=input,
-                             outputsize=outputsize,
-                             **kwargs)
+                        input=input,
+                        outputsize=outputsize,
+                        **kwargs)
         except Exception as except_:
             print(except_)
             pdb.set_trace()
@@ -863,7 +880,12 @@ class LeapNet:
         """
         for _, v in self.pre_proc.items():
             v.initwn(sess=sess)
-        self.nn.initwn(sess=sess)
+        self.E.initwn(sess=sess)
+        if self.e is not None:
+            self.e.initwn(sess=sess)
+        if self.d is not None:
+            self.d.initwn(sess=sess)
+        self.D.initwn(sess=sess)
         for _, v in self.post_proc.items():
             v.initwn(sess=sess)
 
@@ -948,9 +970,9 @@ class LeapNet:
                                    outputsize=size_out,
                                    **kwargs_enc)
                     self.pre_proc[varname] = tmp
-                    self.post_proc[varname] = tmp.pred
+                    # self.post_proc[varname] = tmp.pred
 
-    def _builddecoders(self, encDecNN, args_dec, kwargs_dec, inputdec=None):
+    def _builddecoders(self, encDecNN, args_dec, kwargs_dec, inputdec):
         """
         Build the decoder networks
         :param sizes:
@@ -960,8 +982,6 @@ class LeapNet:
         :return:
         """
         with tf.variable_scope("postprocessing"):
-            if inputdec is None:
-                inputdec = self.nn.pred
             for varname in sorted(self.outputname):
                 with tf.variable_scope(varname):
                     # size_out = sizes[varname]
@@ -971,7 +991,7 @@ class LeapNet:
                                    **kwargs_dec)
                     self.post_proc[varname] = tmp
                     self.y_hat[varname] = tmp.pred
-                    self.size_out += int(tmp.pred.get_shape()[1])
+                    # self.size_out += int(tmp.pred.get_shape()[1])
 
     def _have_latent_space(self):
         return False
@@ -982,8 +1002,9 @@ class LeapNet:
         :param loss: the loss tensor use for training (reconstruction loss) : I need to add the KL-divergence loss if vae is used
         :return:
         """
+        # pdb.set_trace()
         self.loss = loss
-        return loss
+        return self.loss
 
     def init_summary(self, mergedsummaryvar):
         """
@@ -1007,3 +1028,19 @@ class LeapNet:
         :return:
         """
         pass
+
+    def getoutput(self):
+        """
+        :return: a dictionnray corresponding to the output variables. keys; variables names, values: the tensor of the forward pass
+        """
+        # pdb.set_trace()
+        return self.y_hat
+
+    def run(self, sess, toberun):
+        """
+        Use the tensorflow session 'sess' to run the graph node 'toberun' with data 'data'
+        :param sess: a tensorflow session
+        :param toberun: a node in the tensorflow computation graph to be run...
+        :return:
+        """
+        return sess.run(toberun)
