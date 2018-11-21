@@ -660,14 +660,16 @@ class LeapNet:
                  # encoder E
                  nnTypeE=NNFully, argsE=(), kwargsE={},
 
-                 # latent leap
+                 # latent leaps (no sharing between dimension)
                  ## e
-                 nnType_e=NNFully, args_e=(), kwargs_e={},
+                 # nnType_e=NNFully, args_e=(), kwargs_e={},
                  var_leap=[],
                  # var_leap={}, #  before
-                 nb_axis_per_dim_of_tau=1,
+                 # nb_axis_per_dim_of_tau=1,
                  ## d
-                 nnType_d=NNFully, args_d=(), kwargs_d={},
+                 # nnType_d=NNFully, args_d=(), kwargs_d={},
+                 n_layers_L=1,
+                 size_L=10,
 
                  # decoder D
                  nnTypeD=NNFully, argsD=(), kwargsD={},
@@ -763,48 +765,113 @@ class LeapNet:
                                    input=self.enc_output,
                                    outputsize=latent_dim_size,
                                    kwargs=kwargsE)
+        self.my_flop = 0
+        self.my_nb_params = 0
 
         # make the latent leap
         if latent_jump or resnet_if_no_jump:
-            var = var_leap[0]
-            size_var = int(self.data[var].get_shape()[1])*nb_axis_per_dim_of_tau
             with tf.variable_scope("latent_leap" if latent_jump else "residual_path"):
-                ## build e
-                self.h_tau_e = None
-                with tf.variable_scope("e"):
-                    self.e, self.h_tau_e = self._build(nnType=nnType_e, args=args_e,
-                                               input=self.h_x, outputsize=size_var, kwargs=kwargs_e)
+                # var = var_leap[0]
+                # size_var = int(self.data[var].get_shape()[1])*nb_axis_per_dim_of_tau
 
-                ## at this stage tau is ready to be projected on the axis
-                if latent_jump:
+                # old leap net with e and d
+                # ## build e
+                # self.h_tau_e = None
+                # with tf.variable_scope("e"):
+                #     self.e, self.h_tau_e = self._build(nnType=nnType_e, args=args_e,
+                #                                input=self.h_x, outputsize=size_var, kwargs=kwargs_e)
+                #
+                # ## at this stage tau is ready to be projected on the axis
+                # if latent_jump:
+                #
+                #     with tf.variable_scope("projection"):
+                #         enco = SpecificGDOEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
+                #                                    sizeout=outputsize,
+                #                                    nbconnections=nb_axis_per_dim_of_tau,
+                #                                    path=self.path,
+                #                                    reload=self.reload,
+                #                                    name="{}_guided_dropout_encoding".format(var),
+                #                                    keep_prob=None)
+                #         self.enc_var_gdo = enco(self.data[var])
+                #         self.h_tau_after_proj = tf.multiply(self.h_tau_e, self.enc_var_gdo)
+                # else:
+                #     self.h_tau_after_proj = self.h_tau_e
+                #
+                # ## build d
+                # self.h_tau = None
+                # with tf.variable_scope("d"):
+                #     self.d, self.h_tau = self._build(nnType=nnType_d, args=args_d,
+                #                  input=self.h_tau_after_proj, outputsize=latent_dim_size, kwargs=kwargs_d)
 
-                    with tf.variable_scope("projection"):
-                        enco = SpecificGDOEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
-                                                   sizeout=outputsize,
-                                                   nbconnections=nb_axis_per_dim_of_tau,
-                                                   path=self.path,
-                                                   reload=self.reload,
-                                                   name="{}_guided_dropout_encoding".format(var),
-                                                   keep_prob=None)
-                        self.enc_var_gdo = enco(self.data[var])
-                        self.h_tau_after_proj = tf.multiply(self.h_tau_e, self.enc_var_gdo)
-                else:
-                    self.h_tau_after_proj = self.h_tau_e
 
-                ## build d
-                self.h_tau = None
-                with tf.variable_scope("d"):
-                    self.d, self.h_tau = self._build(nnType=nnType_d, args=args_d,
-                                 input=self.h_tau_after_proj, outputsize=latent_dim_size, kwargs=kwargs_d)
+                # new leap net, Balthazar style
+                self.tau = tf.concat([self.data[var] for var in var_leap], axis=1, name="tau_concatenantion")
+                s_tau = self.tau.shape[-1]
+                D = self.h_x.shape[-1]
+                h = tf.reshape(self.h_x, [-1, 1, 1, D]) # assign shape [Nbatch, 1, 1, D]
+                h = h * tf.ones([1, s_tau, 1, 1]) # copy "size of tau" times [Nbatch, |tau|, 1, D]
+                self.my_flop += s_tau * D # copy
+
+                input_dim = D
+                output_dim = size_L
+                name = "leap"
+                non_lin = tf.nn.relu
+                for layer in range(n_layers_L):
+
+                    # For the first and last layers, specify the right dimension
+                    # latent_dimension_left = d
+                    # latent_dimension_right = d
+                    # if layer == 0:
+                    #     latent_dimension_left = d_in
+                    if layer == n_layers_L - 1:
+                        output_dim = D
+
+                    w = tf.get_variable(name= "w_{}_{}".format(name, layer+1),#'w_' + name + '_' + str(layer + 1),
+                                        shape=[1, s_tau, input_dim, output_dim],
+                                        initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32,
+                                                                                         uniform=False),
+                                        trainable=True,
+                                        dtype=tf.float32)
+                    self.my_nb_params += s_tau * input_dim * output_dim
+                    b = tf.get_variable(name='b_{}_{}'.format(name, layer+1),
+                                        shape=[1, s_tau, 1, output_dim],
+                                        initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32,
+                                                                                         uniform=False),
+                                        trainable=True,
+                                        dtype=tf.float32)
+                    self.my_nb_params += s_tau * output_dim
+
+
+                    w = w * tf.ones([tf.shape(h)[0], 1, 1, 1])
+                    self.my_flop += tf.shape(h)[0] * s_tau * input_dim * output_dim  # copy
+
+                    h = non_lin(tf.matmul(h, w) + b)
+                    self.my_flop += s_tau*(2*input_dim*output_dim-output_dim) # matrix multiplication
+                    self.my_flop += s_tau * output_dim  # adding bias
+                    self.my_flop += tf.shape(h)[0] * s_tau * output_dim  # non linearity
+
+                    input_dim = size_L
+
+                h = tf.transpose(h, [0, 3, 2, 1])
+
+                tau = tf.reshape(self.tau, [-1, 1, s_tau, 1])  # reshape [Nbatch, 1, |tau|, 1]
+                tau = tau * tf.ones([1, D, 1, 1])   # copy "size of tau" times [Nbatch, D, |tau|, 1]
+                self.my_flop += s_tau * D  # non linearity
+
+                h = tf.matmul(h, tau)  # results of size [Nbatch, D, 1, 1]
+                self.my_flop += D*(s_tau) # matrix multiplication
+
+                self.leap = tf.reshape(h, [-1, D])  # reshape [Nbatch, D] = original size
+
         else:
             self.d = None
             self.e = None
             self.h_tau_e = None
-            self.h_tau = 0.
+            self.leap = 0.
             self.h_tau_after_proj = None
 
         ## really make the leap now:
-        self.h_after_leap = self.h_x + self.h_tau
+        self.h_after_leap = self.h_x + self.leap
 
         output_D_size = latent_dim_size if kwargs_postproc is not None else self.size_out
         with tf.variable_scope("D"):
@@ -914,10 +981,13 @@ class LeapNet:
         for _, v in self.pre_proc.items():
             res += v.getnbparam()
         res += self.E.getnbparam()
-        if self.e is not None:
-            res += self.e.getnbparam()
-        if self.d is not None:
-            res += self.d.getnbparam()
+        # if self.e is not None:
+        #     res += self.e.getnbparam()
+        # if self.d is not None:
+        #     res += self.d.getnbparam()
+
+        res += self.my_nb_params
+
         res += self.D.getnbparam()
         for _, v in self.post_proc.items():
             res += v.getnbparam()
@@ -934,10 +1004,12 @@ class LeapNet:
         for _, v in self.pre_proc.items():
             res += v.getflop()
         res += self.E.getflop()
-        if self.e is not None:
-            res += self.e.getflop()
-        if self.d is not None:
-            res += self.d.getflop()
+        # if self.e is not None:
+        #     res += self.e.getflop()
+        # if self.d is not None:
+        #     res += self.d.getflop()
+        res += self.my_flop
+
         res += self.D.getflop()
         for _, v in self.post_proc.items():
             res += v.getflop()
