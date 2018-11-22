@@ -646,10 +646,11 @@ class LeapLayer:
                  nnTypeD, argsD, kwargsD,
                  size_out,
                  size_L, n_layers_L,
-                 latent_jump, data):
+                 latent_jump, tau):
         self.enc_output_raw = input
         self.size_out = size_out
-        self.data = data
+        # self.data = data
+        self.tau = tau
         # 3. build the neural network
         with tf.variable_scope("E"):
             self.nn = None
@@ -707,7 +708,6 @@ class LeapLayer:
 
 
             # new leap net, Balthazar style
-            self.tau = tf.concat([self.data[var] for var in var_leap], axis=1, name="tau_concatenantion")
             s_tau = self.tau.shape[-1]
             D = self.h_x.shape[-1]
 
@@ -838,8 +838,8 @@ class LeapcVAE:
                  sizes,
                  path, reload,
                  latent_dim_size,
-
                  leap=True,
+                 var_tau=("tau", ),
                  # resnet_if_no_jump=True,
                  # variable as input and output
                  var_x_name=("input",), var_y_name=("output",),
@@ -850,13 +850,13 @@ class LeapcVAE:
                  resize_nn=True,
 
                  # latent leaps (no sharing between dimension) USED ONLY WHEN leap IS TRUE
-                 var_leap=("tau", ),
                  # encoder E
                  nnTypeE=NNFully, argsE=(), kwargsE={},
                  # decoder D
                  nnTypeD=NNFully, argsD=(), kwargsD={},
                  # leap L
                  n_layers_L=1,size_L=10,
+                 latent_dim_size_leap=20,
 
                  # standard NN USED ONLY WHEN leap is FALSE
                  layersizes=(10,),
@@ -870,7 +870,7 @@ class LeapcVAE:
         """
         spec_encoding = {}  # specific pre processing of the data, currently not used
 
-        if len(var_leap) > 1:
+        if len(var_tau) > 1:
             raise RuntimeError("For now you can only make a latent leap with one variable")
 
         self.data = data  # the dictionnary of data pre-processed as produced by an ExpData instance
@@ -929,21 +929,45 @@ class LeapcVAE:
             else:
                 self.enc_output_raw = self.input
 
+        self.tau = tf.concat([self.data[var] for var in var_tau], axis=1, name="tau_concatenantion")
         with tf.variable_scope("cVAE"):
-            if leap:
-                self.NN = LeapLayer(input=self.enc_output_raw, latent_dim_size=latent_dim_size, resize_nn=resize_nn,
-                nnTypeE=nnTypeE, argsE=argsE, kwargsE=kwargsE, nnTypeD=nnTypeD, argsD=argsD, kwargsD=kwargsD,
-                                   size_out=latent_dim_size if kwargs_postproc is not None else self.size_out,
-                                   size_L=size_L, n_layers_L=n_layers_L,
-                latent_jump=leap, data=data)
-                self.hat_y_tmp = self.NN.hat_y_tmp
-            else:
-                self.NN = NNFully(input=self.enc_output_raw,
-                                  outputsize=latent_dim_size if kwargs_postproc is not None else self.size_out,
-                                  layersizes=layersizes
-                                  )
-                self.hat_y_tmp = self.NN.pred
+            with tf.variable_scope("encoder"):
+                if leap:
+                    self.Enc = LeapLayer(input=self.enc_output_raw, latent_dim_size=latent_dim_size_leap, resize_nn=resize_nn,
+                    nnTypeE=nnTypeE, argsE=argsE, kwargsE=kwargsE, nnTypeD=nnTypeD, argsD=argsD, kwargsD=kwargsD,
+                                       size_out=2*latent_dim_size,
+                                       size_L=size_L, n_layers_L=n_layers_L, tau=self.tau,
+                    latent_jump=leap,)
+                    self.h = self.Enc.hat_y_tmp
+                else:
+                    self.Enc = NNFully(input=tf.concat((self.enc_output_raw, self.tau), axis=1),
+                                      outputsize=2*latent_dim_size,
+                                      layersizes=layersizes
+                                      )
+                    self.h = self.Enc.pred
 
+            with tf.variable_scope("reparam_trick"):
+                self.mu = self.h[:, :latent_dim_size]
+                self.logvar = self.h[:, latent_dim_size:]
+                self.eps = tf.random_normal(shape=(latent_dim_size,))
+                self.z = self.mu + tf.exp(self.logvar / 2) * self.eps
+
+            with tf.variable_scope("decoder"):
+                if leap:
+                    self.Dec = LeapLayer(input=self.z, latent_dim_size=latent_dim_size_leap, resize_nn=resize_nn,
+                    nnTypeE=nnTypeE, argsE=argsE, kwargsE=kwargsE, nnTypeD=nnTypeD, argsD=argsD, kwargsD=kwargsD,
+                                       size_out=latent_dim_size_leap if kwargs_postproc is not None else self.size_out,
+                                       size_L=size_L, n_layers_L=n_layers_L, tau=self.tau,
+                    latent_jump=leap,)
+                    self.hat_y_tmp = self.Dec.hat_y_tmp
+                else:
+                    self.Dec = NNFully(input=tf.concat((self.z, self.tau), axis=1),
+                                      outputsize=latent_dim_size_leap if kwargs_postproc is not None else self.size_out,
+                                      layersizes=layersizes
+                                      )
+                    self.hat_y_tmp = self.Dec.pred
+
+                # self.hat_y_tmp = self.Dec.hat_y_tmp
         # post processing independantly each data types (initialization procedure)
         with tf.variable_scope("post_processing"):
             if kwargs_postproc is None:
@@ -980,6 +1004,8 @@ class LeapcVAE:
         self.mergedsummaryvar = None
         self.loss = None
         self.vars_out = self.y_hat
+        with tf.name_scope('kl_loss'):
+            self.kl_loss = 0.5 * tf.reduce_sum(tf.exp(self.logvar) + self.mu ** 2 - 1. - self.logvar, 1)
 
     def _build(self, nnType, args, input, outputsize, kwargs):
         """
@@ -1010,7 +1036,8 @@ class LeapcVAE:
         """
         for _, v in self.pre_proc.items():
             v.initwn(sess=sess)
-        self.NN.initwn(sess=sess)
+        self.Enc.initwn(sess=sess)
+        self.Dec.initwn(sess=sess)
         for _, v in self.post_proc.items():
             v.initwn(sess=sess)
 
@@ -1039,7 +1066,8 @@ class LeapcVAE:
         res = 0
         for _, v in self.pre_proc.items():
             res += v.getnbparam()
-        self.NN.getnbparam()
+        self.Enc.getnbparam()
+        self.Dec.getnbparam()
         for _, v in self.post_proc.items():
             res += v.getnbparam()
         return res
@@ -1054,7 +1082,8 @@ class LeapcVAE:
         res = 0
         for _, v in self.pre_proc.items():
             res += v.getflop()
-        self.NN.getflop()
+        self.Enc.getflop()
+        self.Dec.getflop()
         for _, v in self.post_proc.items():
             res += v.getflop()
         return res
@@ -1120,7 +1149,8 @@ class LeapcVAE:
         """
         # pdb.set_trace()
         self.loss = loss
-        return self.loss
+
+        return self.loss + self.kl_loss
 
     def init_summary(self, mergedsummaryvar):
         """
