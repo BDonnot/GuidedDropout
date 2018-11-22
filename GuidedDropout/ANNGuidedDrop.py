@@ -761,7 +761,7 @@ class LeapLayer:
                 h = non_lin(tf.matmul(h, w, name="build_L_layer_{}".format(layer)) + b)
                 self.my_flop += s_tau*(2*input_dim*output_dim-output_dim) # matrix multiplication
                 self.my_flop += s_tau * output_dim  # adding bias
-                self.my_flop += tf.shape(h)[0] * s_tau * output_dim  # non linearity
+                self.my_flop += s_tau * output_dim  # non linearity
 
                 input_dim = size_L
 
