@@ -640,39 +640,226 @@ class ComplexGraphWithComplexGD(ComplexGraphWithGD):
 
 from TensorflowHelpers import DenseLayer
 
-class LeapNet:
+class LeapLayer:
+    def __init__(self, input, latent_dim_size, resize_nn,
+                 nnTypeE, argsE, kwargsE,
+                 nnTypeD, argsD, kwargsD,
+                 size_out,
+                 size_L, n_layers_L,
+                 latent_jump, data):
+        self.enc_output_raw = input
+        self.size_out = size_out
+        self.data = data
+        # 3. build the neural network
+        with tf.variable_scope("E"):
+            self.nn = None
+            if resize_nn is not None:
+                self.resize_layer = DenseLayer(input=self.enc_output_raw, size=latent_dim_size,
+                                               relu=False, bias=False,
+                                               weight_normalization=False,
+                                               keep_prob=None, layernum="resizing_layer")
+                self.enc_output = self.resize_layer.res
+            else:
+                self.resize_layer = None
+                self.enc_output = self.enc_output_raw
+
+            self.h_x = None
+            self.E, self.h_x = self._build(nnType=nnTypeE, args=argsE,
+                                   input=self.enc_output,
+                                   outputsize=latent_dim_size,
+                                   kwargs=kwargsE)
+        self.my_flop = 0
+        self.my_nb_params = 0
+
+        # make the latent leap
+        with tf.variable_scope("latent_leap" if latent_jump else "residual_path"):
+            # var = var_leap[0]
+            # size_var = int(self.data[var].get_shape()[1])*nb_axis_per_dim_of_tau
+
+            # old leap net with e and d
+            # ## build e
+            # self.h_tau_e = None
+            # with tf.variable_scope("e"):
+            #     self.e, self.h_tau_e = self._build(nnType=nnType_e, args=args_e,
+            #                                input=self.h_x, outputsize=size_var, kwargs=kwargs_e)
+            #
+            # ## at this stage tau is ready to be projected on the axis
+            # if latent_jump:
+            #
+            #     with tf.variable_scope("projection"):
+            #         enco = SpecificGDOEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
+            #                                    sizeout=outputsize,
+            #                                    nbconnections=nb_axis_per_dim_of_tau,
+            #                                    path=self.path,
+            #                                    reload=self.reload,
+            #                                    name="{}_guided_dropout_encoding".format(var),
+            #                                    keep_prob=None)
+            #         self.enc_var_gdo = enco(self.data[var])
+            #         self.h_tau_after_proj = tf.multiply(self.h_tau_e, self.enc_var_gdo)
+            # else:
+            #     self.h_tau_after_proj = self.h_tau_e
+            #
+            # ## build d
+            # self.h_tau = None
+            # with tf.variable_scope("d"):
+            #     self.d, self.h_tau = self._build(nnType=nnType_d, args=args_d,
+            #                  input=self.h_tau_after_proj, outputsize=latent_dim_size, kwargs=kwargs_d)
+
+
+            # new leap net, Balthazar style
+            self.tau = tf.concat([self.data[var] for var in var_leap], axis=1, name="tau_concatenantion")
+            s_tau = self.tau.shape[-1]
+            D = self.h_x.shape[-1]
+
+            h = tf.reshape(self.h_x, [-1, 1, 1, D]) # assign shape [Nbatch, 1, 1, D]
+            h = h * tf.ones([1, s_tau, 1, 1]) # copy "size of tau" times [Nbatch, |tau|, 1, D]
+            self.my_flop += s_tau * D # copy
+
+            input_dim = D
+            output_dim = size_L
+            name = "leap"
+            non_lin = tf.nn.relu
+            self.wbs = []
+            for layer in range(n_layers_L):
+
+                # For the first and last layers, specify the right dimension
+                # latent_dimension_left = d
+                # latent_dimension_right = d
+                # if layer == 0:
+                #     latent_dimension_left = d_in
+                if layer == n_layers_L - 1:
+                    output_dim = D
+
+                w_fp32 = tf.get_variable(name= "w_{}_{}".format(name, layer+1),#'w_' + name + '_' + str(layer + 1),
+                                    shape=[1, s_tau, input_dim, output_dim],
+                                    initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32,
+                                                                                     uniform=False),
+                                    trainable=True,
+                                    dtype=tf.float32)
+                self.my_nb_params += s_tau * input_dim * output_dim
+                b_fp32 = tf.get_variable(name='b_{}_{}'.format(name, layer+1),
+                                    shape=[1, s_tau, 1, output_dim],
+                                    initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32,
+                                                                                     uniform=False),
+                                    trainable=True,
+                                    dtype=tf.float32)
+                if DTYPE_USED != tf.float32:
+                    w = tf.cast(w_fp32, DTYPE_USED)
+                    b = tf.cast(b_fp32, DTYPE_USED)
+                else:
+                    w = w_fp32
+                    b = b_fp32
+
+                self.wbs.append((w,b))
+
+                self.my_nb_params += s_tau * output_dim
+
+
+                w = w * tf.ones([tf.shape(h)[0], 1, 1, 1])
+                self.my_flop += tf.shape(h)[0] * s_tau * input_dim * output_dim  # copy
+
+                h = non_lin(tf.matmul(h, w, name="build_L_layer_{}".format(layer)) + b)
+                self.my_flop += s_tau*(2*input_dim*output_dim-output_dim) # matrix multiplication
+                self.my_flop += s_tau * output_dim  # adding bias
+                self.my_flop += tf.shape(h)[0] * s_tau * output_dim  # non linearity
+
+                input_dim = size_L
+
+            h = tf.transpose(h, [0, 3, 2, 1])
+
+            tau = tf.reshape(self.tau, [-1, 1, s_tau, 1])  # reshape [Nbatch, 1, |tau|, 1]
+            tau = tau * tf.ones([1, D, 1, 1])   # copy "size of tau" times [Nbatch, D, |tau|, 1]
+            self.my_flop += s_tau * D  # non linearity
+
+            h = tf.matmul(h, tau, name="tau_element_wise_sum")  # results of size [Nbatch, D, 1, 1]
+            self.my_flop += D*(s_tau) # matrix multiplication
+
+            self.leap = tf.reshape(h, [-1, D])  # reshape [Nbatch, D] = original size
+
+        ## really make the leap now:
+        self.h_after_leap = self.h_x + self.leap
+
+        output_D_size = size_out  #latent_dim_size if kwargs_postproc is not None else self.size_out
+        with tf.variable_scope("D"):
+            self.D, self.hat_y_tmp = self._build(nnType=nnTypeD, args=argsD,
+                                     input=self.h_after_leap,
+                                     outputsize=output_D_size,
+                                     kwargs=kwargsD)
+
+    def _build(self, nnType, args, input, outputsize, kwargs):
+        """
+
+                :param nnType:
+                :param argsNN:
+                :param input:
+                :param outputsize:
+                :param kwargsNN:
+                :return:
+                """
+        try:
+            nn = nnType(*args,
+                        input=input,
+                        outputsize=outputsize,
+                        **kwargs)
+        except Exception as except_:
+            print(except_)
+            pdb.set_trace()
+            raise
+        return nn, nn.pred
+
+    def initwn(self, sess):
+        raise NotImplementedError()
+
+    def getnbparam(self):
+        """
+        :return:  the number of total free parameters of the neural network"""
+        res = self.resize_layer.nbparams if self.resize_layer is not None else 0
+        res += self.E.getnbparam()
+        res += self.my_nb_params
+        res += self.D.getnbparam()
+        return res
+
+    def getflop(self):
+        """
+        flops are computed using formulas in https://mediatum.ub.tum.de/doc/625604/625604
+        it takes into account both multiplication and addition.
+        Results are given for a minibatch of 1 example for a single forward pass.
+        :return: the number of flops of the neural network build
+        """
+        res = self.resize_layer.flops if self.resize_layer is not None else 0
+        res += self.E.getflop()
+        res += self.my_flop
+        res += self.D.getflop()
+        return res
+
+class LeapcVAE:
     def __init__(self, data,
                  outputsize,
                  sizes,
                  path, reload,
                  latent_dim_size,
 
-                 latent_jump=True,
-                 resnet_if_no_jump=True,
+                 leap=True,
+                 # resnet_if_no_jump=True,
                  # variable as input and output
-                 var_x_name={"input"}, var_y_name={"output"},
+                 var_x_name=("input",), var_y_name=("output",),
 
                  # pre processing
                  NN_preproc=NNFully,
                  args_preproc=(), kwargs_preproc={},
                  resize_nn=True,
 
+                 # latent leaps (no sharing between dimension) USED ONLY WHEN leap IS TRUE
+                 var_leap=("tau", ),
                  # encoder E
                  nnTypeE=NNFully, argsE=(), kwargsE={},
-
-                 # latent leaps (no sharing between dimension)
-                 ## e
-                 # nnType_e=NNFully, args_e=(), kwargs_e={},
-                 var_leap=[],
-                 # var_leap={}, #  before
-                 # nb_axis_per_dim_of_tau=1,
-                 ## d
-                 # nnType_d=NNFully, args_d=(), kwargs_d={},
-                 n_layers_L=1,
-                 size_L=10,
-
                  # decoder D
                  nnTypeD=NNFully, argsD=(), kwargsD={},
+                 # leap L
+                 n_layers_L=1,size_L=10,
+
+                 # standard NN USED ONLY WHEN leap is FALSE
+                 layersizes=(10,),
 
                  # post processing
                  NN_postproc=NNFully,
@@ -682,11 +869,6 @@ class LeapNet:
         """
         """
         spec_encoding = {}  # specific pre processing of the data, currently not used
-
-        # self.masks_spec = masks_spec
-        # self.path = path
-        # self.reload = reload
-        # self.penalty_loss = penalty_loss
 
         if len(var_leap) > 1:
             raise RuntimeError("For now you can only make a latent leap with one variable")
@@ -747,141 +929,22 @@ class LeapNet:
             else:
                 self.enc_output_raw = self.input
 
-        # 3. build the neural network
-        with tf.variable_scope("E"):
-            self.nn = None
-            if resize_nn is not None:
-                self.resize_layer = DenseLayer(input=self.enc_output_raw, size=latent_dim_size,
-                                               relu=False, bias=False,
-                                               weight_normalization=False,
-                                               keep_prob=None, layernum="resizing_layer")
-                self.enc_output = self.resize_layer.res
+        with tf.variable_scope("cVAE"):
+            if leap:
+                self.NN = LeapLayer(input=self.enc_output_raw, latent_dim_size=latent_dim_size, resize_nn=resize_nn,
+                nnTypeE=nnTypeE, argsE=argsE, kwargsE=kwargsE, nnTypeD=nnTypeD, argsD=argsD, kwargsD=kwargsD,
+                                   size_out=latent_dim_size if kwargs_postproc is not None else self.size_out,
+                                   size_L=size_L, n_layers_L=n_layers_L,
+                latent_jump=leap, data=data)
+                self.hat_y_tmp = self.NN.hat_y_tmp
             else:
-                self.resize_layer = None
-                self.enc_output = self.enc_output_raw
-
-            self.h_x = None
-            self.E, self.h_x = self._build(nnType=nnTypeE, args=argsE,
-                                   input=self.enc_output,
-                                   outputsize=latent_dim_size,
-                                   kwargs=kwargsE)
-        self.my_flop = 0
-        self.my_nb_params = 0
-
-        # make the latent leap
-        if latent_jump or resnet_if_no_jump:
-            with tf.variable_scope("latent_leap" if latent_jump else "residual_path"):
-                # var = var_leap[0]
-                # size_var = int(self.data[var].get_shape()[1])*nb_axis_per_dim_of_tau
-
-                # old leap net with e and d
-                # ## build e
-                # self.h_tau_e = None
-                # with tf.variable_scope("e"):
-                #     self.e, self.h_tau_e = self._build(nnType=nnType_e, args=args_e,
-                #                                input=self.h_x, outputsize=size_var, kwargs=kwargs_e)
-                #
-                # ## at this stage tau is ready to be projected on the axis
-                # if latent_jump:
-                #
-                #     with tf.variable_scope("projection"):
-                #         enco = SpecificGDOEncoding(sizeinputonehot=int(self.data[var].get_shape()[1]),
-                #                                    sizeout=outputsize,
-                #                                    nbconnections=nb_axis_per_dim_of_tau,
-                #                                    path=self.path,
-                #                                    reload=self.reload,
-                #                                    name="{}_guided_dropout_encoding".format(var),
-                #                                    keep_prob=None)
-                #         self.enc_var_gdo = enco(self.data[var])
-                #         self.h_tau_after_proj = tf.multiply(self.h_tau_e, self.enc_var_gdo)
-                # else:
-                #     self.h_tau_after_proj = self.h_tau_e
-                #
-                # ## build d
-                # self.h_tau = None
-                # with tf.variable_scope("d"):
-                #     self.d, self.h_tau = self._build(nnType=nnType_d, args=args_d,
-                #                  input=self.h_tau_after_proj, outputsize=latent_dim_size, kwargs=kwargs_d)
-
-
-                # new leap net, Balthazar style
-                self.tau = tf.concat([self.data[var] for var in var_leap], axis=1, name="tau_concatenantion")
-                s_tau = self.tau.shape[-1]
-                D = self.h_x.shape[-1]
-                h = tf.reshape(self.h_x, [-1, 1, 1, D]) # assign shape [Nbatch, 1, 1, D]
-                h = h * tf.ones([1, s_tau, 1, 1]) # copy "size of tau" times [Nbatch, |tau|, 1, D]
-                self.my_flop += s_tau * D # copy
-
-                input_dim = D
-                output_dim = size_L
-                name = "leap"
-                non_lin = tf.nn.relu
-                for layer in range(n_layers_L):
-
-                    # For the first and last layers, specify the right dimension
-                    # latent_dimension_left = d
-                    # latent_dimension_right = d
-                    # if layer == 0:
-                    #     latent_dimension_left = d_in
-                    if layer == n_layers_L - 1:
-                        output_dim = D
-
-                    w = tf.get_variable(name= "w_{}_{}".format(name, layer+1),#'w_' + name + '_' + str(layer + 1),
-                                        shape=[1, s_tau, input_dim, output_dim],
-                                        initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32,
-                                                                                         uniform=False),
-                                        trainable=True,
-                                        dtype=tf.float32)
-                    self.my_nb_params += s_tau * input_dim * output_dim
-                    b = tf.get_variable(name='b_{}_{}'.format(name, layer+1),
-                                        shape=[1, s_tau, 1, output_dim],
-                                        initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32,
-                                                                                         uniform=False),
-                                        trainable=True,
-                                        dtype=tf.float32)
-                    self.my_nb_params += s_tau * output_dim
-
-
-                    w = w * tf.ones([tf.shape(h)[0], 1, 1, 1])
-                    self.my_flop += tf.shape(h)[0] * s_tau * input_dim * output_dim  # copy
-
-                    h = non_lin(tf.matmul(h, w) + b)
-                    self.my_flop += s_tau*(2*input_dim*output_dim-output_dim) # matrix multiplication
-                    self.my_flop += s_tau * output_dim  # adding bias
-                    self.my_flop += tf.shape(h)[0] * s_tau * output_dim  # non linearity
-
-                    input_dim = size_L
-
-                h = tf.transpose(h, [0, 3, 2, 1])
-
-                tau = tf.reshape(self.tau, [-1, 1, s_tau, 1])  # reshape [Nbatch, 1, |tau|, 1]
-                tau = tau * tf.ones([1, D, 1, 1])   # copy "size of tau" times [Nbatch, D, |tau|, 1]
-                self.my_flop += s_tau * D  # non linearity
-
-                h = tf.matmul(h, tau)  # results of size [Nbatch, D, 1, 1]
-                self.my_flop += D*(s_tau) # matrix multiplication
-
-                self.leap = tf.reshape(h, [-1, D])  # reshape [Nbatch, D] = original size
-
-        else:
-            self.d = None
-            self.e = None
-            self.h_tau_e = None
-            self.leap = 0.
-            self.h_tau_after_proj = None
-
-        ## really make the leap now:
-        self.h_after_leap = self.h_x + self.leap
-
-        output_D_size = latent_dim_size if kwargs_postproc is not None else self.size_out
-        with tf.variable_scope("D"):
-            self.D, self.hat_y_tmp = self._build(nnType=nnTypeD, args=argsD,
-                                     input=self.h_after_leap,
-                                     outputsize=output_D_size,
-                                     kwargs=kwargsD)
+                self.NN = NNFully(input=self.enc_output_raw,
+                                  outputsize=latent_dim_size if kwargs_postproc is not None else self.size_out,
+                                  layersizes=layersizes
+                                  )
+                self.hat_y_tmp = self.NN.pred
 
         # post processing independantly each data types (initialization procedure)
-
         with tf.variable_scope("post_processing"):
             if kwargs_postproc is None:
                 """
@@ -947,12 +1010,7 @@ class LeapNet:
         """
         for _, v in self.pre_proc.items():
             v.initwn(sess=sess)
-        self.E.initwn(sess=sess)
-        if self.e is not None:
-            self.e.initwn(sess=sess)
-        if self.d is not None:
-            self.d.initwn(sess=sess)
-        self.D.initwn(sess=sess)
+        self.NN.initwn(sess=sess)
         for _, v in self.post_proc.items():
             v.initwn(sess=sess)
 
@@ -977,18 +1035,11 @@ class LeapNet:
     def getnbparam(self):
         """
         :return:  the number of total free parameters of the neural network"""
-        res = self.resize_layer.nbparams if self.resize_layer is not None else 0
+        #TODO
+        res = 0
         for _, v in self.pre_proc.items():
             res += v.getnbparam()
-        res += self.E.getnbparam()
-        # if self.e is not None:
-        #     res += self.e.getnbparam()
-        # if self.d is not None:
-        #     res += self.d.getnbparam()
-
-        res += self.my_nb_params
-
-        res += self.D.getnbparam()
+        self.NN.getnbparam()
         for _, v in self.post_proc.items():
             res += v.getnbparam()
         return res
@@ -1000,17 +1051,10 @@ class LeapNet:
         Results are given for a minibatch of 1 example for a single forward pass.
         :return: the number of flops of the neural network build
         """
-        res = self.resize_layer.flops if self.resize_layer is not None else 0
+        res = 0
         for _, v in self.pre_proc.items():
             res += v.getflop()
-        res += self.E.getflop()
-        # if self.e is not None:
-        #     res += self.e.getflop()
-        # if self.d is not None:
-        #     res += self.d.getflop()
-        res += self.my_flop
-
-        res += self.D.getflop()
+        self.NN.getflop()
         for _, v in self.post_proc.items():
             res += v.getflop()
         return res
