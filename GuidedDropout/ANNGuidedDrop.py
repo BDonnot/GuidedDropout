@@ -8,7 +8,7 @@ import pdb
 
 import tensorflow as tf
 from .GuidedDropout import SpecificGDOEncoding, SpecificGDCEncoding, DTYPE_USED
-
+from TensorflowHelpers import ExpGraphOneXOneY
 from TensorflowHelpers import ExpGraph, ComplexGraph, NNFully
 
 
@@ -756,7 +756,7 @@ class LeapLayer:
 
 
                 w = w * tf.ones([tf.shape(h)[0], 1, 1, 1])
-                self.my_flop += tf.shape(h)[0] * s_tau * input_dim * output_dim  # copy
+                self.my_flop += s_tau * input_dim * output_dim  # copy
 
                 h = non_lin(tf.matmul(h, w, name="build_L_layer_{}".format(layer)) + b)
                 self.my_flop += s_tau*(2*input_dim*output_dim-output_dim) # matrix multiplication
@@ -808,7 +808,8 @@ class LeapLayer:
         return nn, nn.pred
 
     def initwn(self, sess):
-        raise NotImplementedError()
+        pass
+        # raise NotImplementedError()
 
     def getnbparam(self):
         """
@@ -832,7 +833,7 @@ class LeapLayer:
         res += self.D.getflop()
         return res
 
-class LeapcVAE:
+class LeapcVAE(ExpGraph):
     def __init__(self, data,
                  outputsize,
                  sizes,
@@ -879,6 +880,19 @@ class LeapcVAE:
         self.path = path
         self.reload = reload
         # self.vars_out = var_y_name
+
+
+        with tf.variable_scope("switching_inputs"):
+            # use_vae_pred is set to 1 during training and 0 when making forecast
+            # it deactivated the input of the VAE, making proper predictions
+            self.keep_input_ph = tf.placeholder(dtype=DTYPE_USED, shape=(), name="ignore_input_ph")
+            self.keep_input = tf.get_variable(name= "ignore_input",
+                                              shape=self.keep_input_ph.get_shape(),
+                                              initializer=tf.constant_initializer(dtype=tf.float32, value=1.),
+                                              trainable=False,
+                                              dtype=tf.float32)
+            self.assign_keep_input = tf.assign(self.keep_input, self.keep_input_ph, name="assign_ignore_input")
+
 
         # dictionnary of "ground truth" data
         self.true_dataY = {k: self.data[k] for k in self.outputname}
@@ -950,7 +964,7 @@ class LeapcVAE:
                 self.mu = self.h[:, :latent_dim_size]
                 self.logvar = self.h[:, latent_dim_size:]
                 self.eps = tf.random_normal(shape=(latent_dim_size,))
-                self.z = self.mu + tf.exp(self.logvar / 2) * self.eps
+                self.z = self.mu*self.keep_input + tf.exp(self.logvar*self.keep_input / 2) * self.eps
 
             with tf.variable_scope("decoder"):
                 if leap:
@@ -1190,3 +1204,32 @@ class LeapcVAE:
         :return:
         """
         return sess.run(toberun)
+
+
+    def _select_proper_dataset(self, sess, dataset_name=None, full_generation=False):
+        """
+        Initialize properly the dataset used for accessing the data
+        :param sess: a tensorflow session
+        :param dataset_name: name of the dataset
+        :param full_generation: do you want to generate images (ignoring input, or just cVAE'ed the input)
+        :return:
+        """
+        if full_generation:
+            sess.run(self.assign_keep_input, feed_dict={self.keep_input_ph: 0.})
+
+        if dataset_name is None or dataset_name == "val" or dataset_name=="Val":
+            dataset, initop = self.data.activate_val_set()
+        elif dataset_name == "Train" or dataset_name == "train":
+            # dataset = self.trainData
+            # initop = self.train_init_op
+            dataset, initop = self.data.activate_trainining_set_sameorder()
+        else:
+            # dataset = self.otherdatasets[dataset_name]
+            # initop = self.otheriterator_init[dataset_name]
+            dataset, initop = self.data.activate_dataset(dataset_name)
+        sess.run(initop)
+        return dataset, initop
+
+    def _restore_proper_dataset(self, sess, dataset_name=None, full_generation=False):
+        if full_generation:
+            sess.run(self.assign_keep_input, feed_dict={self.keep_input_ph: 1.})
