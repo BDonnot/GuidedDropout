@@ -1206,7 +1206,7 @@ class LeapcVAE(ExpGraph):
         return sess.run(toberun)
 
 
-    def _select_proper_dataset(self, sess, dataset_name=None, full_generation=False):
+    def _select_proper_dataset(self, sess, data, dataset_name=None, full_generation=False):
         """
         Initialize properly the dataset used for accessing the data
         :param sess: a tensorflow session
@@ -1218,18 +1218,18 @@ class LeapcVAE(ExpGraph):
             sess.run(self.assign_keep_input, feed_dict={self.keep_input_ph: 0.})
 
         if dataset_name is None or dataset_name == "val" or dataset_name=="Val":
-            dataset, initop = self.data.activate_val_set()
+            dataset, initop = data.activate_val_set()
         elif dataset_name == "Train" or dataset_name == "train":
             # dataset = self.trainData
             # initop = self.train_init_op
-            dataset, initop = self.data.activate_trainining_set_sameorder()
+            dataset, initop = data.activate_trainining_set_sameorder()
         else:
             # dataset = self.otherdatasets[dataset_name]
             # initop = self.otheriterator_init[dataset_name]
-            dataset, initop = self.data.activate_dataset(dataset_name)
+            dataset, initop = data.activate_dataset(dataset_name)
         sess.run(initop)
         return dataset, initop
 
-    def _restore_proper_dataset(self, sess, dataset_name=None, full_generation=False):
+    def _restore_proper_dataset(self, sess, data, dataset_name=None, full_generation=False):
         if full_generation:
             sess.run(self.assign_keep_input, feed_dict={self.keep_input_ph: 1.})
