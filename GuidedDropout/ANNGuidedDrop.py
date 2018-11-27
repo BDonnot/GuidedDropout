@@ -963,7 +963,7 @@ class LeapcVAE(ExpGraph):
             with tf.variable_scope("reparam_trick"):
                 self.mu = self.h[:, :latent_dim_size]
                 self.logvar = self.h[:, latent_dim_size:]
-                self.eps = tf.random_normal(shape=(latent_dim_size,))
+                self.eps = tf.random_normal(shape=tf.shape(self.mu))
                 self.z = self.mu*self.keep_input + tf.exp(self.logvar*self.keep_input / 2) * self.eps
 
             with tf.variable_scope("decoder"):
