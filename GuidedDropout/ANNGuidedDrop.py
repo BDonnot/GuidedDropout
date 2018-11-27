@@ -882,7 +882,7 @@ class LeapcVAE(ExpGraph):
         # self.vars_out = var_y_name
 
 
-        with tf.variable_scope("switching_inputs"):
+        with tf.variable_scope("switching_off_inputs"):
             # use_vae_pred is set to 1 during training and 0 when making forecast
             # it deactivated the input of the VAE, making proper predictions
             self.keep_input_ph = tf.placeholder(dtype=DTYPE_USED, shape=(), name="ignore_input_ph")
@@ -892,6 +892,17 @@ class LeapcVAE(ExpGraph):
                                               trainable=False,
                                               dtype=tf.float32)
             self.assign_keep_input = tf.assign(self.keep_input, self.keep_input_ph, name="assign_ignore_input")
+
+        with tf.variable_scope("switching_off_random"):
+            # use_vae_pred is set to 1 during training and 0 when making forecast
+            # it deactivated the input of the VAE, making proper predictions
+            self.keep_random_ph = tf.placeholder(dtype=DTYPE_USED, shape=(), name="ignore_input_ph")
+            self.keep_random = tf.get_variable(name= "ignore_input",
+                                              shape=self.keep_random_ph.get_shape(),
+                                              initializer=tf.constant_initializer(dtype=tf.float32, value=1.),
+                                              trainable=False,
+                                              dtype=tf.float32)
+            self.assign_keep_random = tf.assign(self.keep_random, self.keep_random_ph, name="assign_ignore_input")
 
 
         # dictionnary of "ground truth" data
@@ -963,7 +974,7 @@ class LeapcVAE(ExpGraph):
             with tf.variable_scope("reparam_trick"):
                 self.mu = self.h[:, :latent_dim_size]
                 self.logvar = self.h[:, latent_dim_size:]
-                self.eps = tf.random_normal(shape=tf.shape(self.mu))
+                self.eps = tf.random_normal(shape=tf.shape(self.mu)) * self.keep_random
                 self.z = self.mu*self.keep_input + tf.exp(self.logvar*self.keep_input / 2) * self.eps
 
             with tf.variable_scope("decoder"):
@@ -1206,7 +1217,7 @@ class LeapcVAE(ExpGraph):
         return sess.run(toberun)
 
 
-    def _select_proper_dataset(self, sess, data, dataset_name=None, full_generation=False):
+    def _select_proper_dataset(self, sess, data, dataset_name=None, use_input=True, use_random=False):
         """
         Initialize properly the dataset used for accessing the data
         :param sess: a tensorflow session
@@ -1214,8 +1225,16 @@ class LeapcVAE(ExpGraph):
         :param full_generation: do you want to generate images (ignoring input, or just cVAE'ed the input)
         :return:
         """
-        if full_generation:
+        # print("use_input {}, use_random {}".format(use_input, use_random ))
+        if not use_input:
             sess.run(self.assign_keep_input, feed_dict={self.keep_input_ph: 0.})
+        else:
+            sess.run(self.assign_keep_input, feed_dict={self.keep_input_ph: 1.})
+
+        if not use_random:
+            sess.run(self.assign_keep_random, feed_dict={self.keep_random_ph: 0.})
+        else:
+            sess.run(self.assign_keep_random, feed_dict={self.keep_random_ph: 1.})
 
         if dataset_name is None or dataset_name == "val" or dataset_name=="Val":
             dataset, initop = data.activate_val_set()
@@ -1230,6 +1249,14 @@ class LeapcVAE(ExpGraph):
         sess.run(initop)
         return dataset, initop
 
-    def _restore_proper_dataset(self, sess, data, dataset_name=None, full_generation=False):
-        if full_generation:
+    def _restore_proper_dataset(self, sess, data, dataset_name=None, use_input=True, use_random=False):
+
+        if not use_input:
             sess.run(self.assign_keep_input, feed_dict={self.keep_input_ph: 1.})
+        # else:
+        #     sess.run(self.assign_keep_input, feed_dict={self.keep_input_ph: 0.})
+
+        if not use_random:
+            sess.run(self.assign_keep_random, feed_dict={self.keep_random_ph: 1.})
+        # else:
+        #     sess.run(self.assign_keep_random, feed_dict={self.keep_random_ph: 0.})
