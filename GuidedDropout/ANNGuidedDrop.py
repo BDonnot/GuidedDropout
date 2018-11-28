@@ -1091,8 +1091,8 @@ class LeapcVAE(ExpGraph):
         res = 0
         for _, v in self.pre_proc.items():
             res += v.getnbparam()
-        self.Enc.getnbparam()
-        self.Dec.getnbparam()
+        res += self.Enc.getnbparam()
+        res += self.Dec.getnbparam()
         for _, v in self.post_proc.items():
             res += v.getnbparam()
         return res
@@ -1107,8 +1107,8 @@ class LeapcVAE(ExpGraph):
         res = 0
         for _, v in self.pre_proc.items():
             res += v.getflop()
-        self.Enc.getflop()
-        self.Dec.getflop()
+        res += self.Enc.getflop()
+        res += self.Dec.getflop()
         for _, v in self.post_proc.items():
             res += v.getflop()
         return res
